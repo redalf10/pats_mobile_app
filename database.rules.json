@@ -1,0 +1,42 @@
+{
+  "rules": {
+    "rooms": {
+      "$roomId": {
+        ".read": true,
+        ".write": true,
+        "users": {
+          "$userId": {
+            ".read": true,
+            ".write": true,
+            "lastSeen": {
+              ".read": true,
+              ".write": true,
+              ".validate": "newData.isNumber()"
+            },
+            "id": {
+              ".validate": "newData.isString()"
+            },
+            "name": {
+              ".validate": "newData.isString()"
+            },
+            "photoUrl": {
+              ".validate": "newData.isString() || newData.val() == null"
+            },
+            "isSpeaking": {
+              ".validate": "newData.isBoolean()"
+            }
+          }
+        },
+        "messages": {
+          "$messageId": {
+            ".read": true,
+            ".write": true,
+            "timestamp": {
+              ".validate": "newData.isNumber()"
+            }
+          }
+        }
+      }
+    }
+  }
+}
