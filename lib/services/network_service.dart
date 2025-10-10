@@ -186,14 +186,16 @@ class NetworkService {
     _messageController.add(message);
   }
 
-  Future<void> setupFirebaseRoom(String code, {required String userId}) async {
+  // In setupFirebaseRoom() method, add the userId parameter:
+
+  Future<void> setupFirebaseRoom(String code, String userId) async {
     try {
       logger.i('Setting up Firebase room for server: $code');
 
-      // Create new FirebaseRoomService instance
+      // Create new FirebaseRoomService instance with the server's userId
       final roomService = FirebaseRoomService(
         roomCode: code,
-        userId: userId,
+        userId: userId, // Pass the server's userId
         onMessage: _handleFirebaseMessage,
         onUsersChanged: (users) {
           _connectedUsers.clear();
@@ -212,6 +214,17 @@ class NetworkService {
       logger.i('Firebase room setup successful');
     } catch (e) {
       logger.e('Failed to setup Firebase room: $e');
+    }
+  }
+
+  Future<void> addSelfUserToFirebase(User user) async {
+    if (AppConfig.useFirebaseAsServer && _roomService != null) {
+      try {
+        await _roomService!.addUser(user);
+        logger.i('Added self user to Firebase: ${user.name}');
+      } catch (e) {
+        logger.e('Failed to add self user to Firebase: $e');
+      }
     }
   }
 

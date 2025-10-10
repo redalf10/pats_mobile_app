@@ -7,6 +7,7 @@ class TranscriptionViewModel extends ChangeNotifier {
   // Store synonyms per transcription ID to avoid re-analyzing
   final Map<int, Map<String, List<String>>> _synonymsCache = {};
   final Set<int> _loadingIds = {};
+  final Set<int> _analyzedIds = {}; // Track what's been analyzed
 
   Map<String, List<String>> getSynonymsForTranscription(int transcriptionId) {
     return _synonymsCache[transcriptionId] ?? {};
@@ -16,34 +17,46 @@ class TranscriptionViewModel extends ChangeNotifier {
     return _loadingIds.contains(transcriptionId);
   }
 
+  bool hasBeenAnalyzed(int transcriptionId) {
+    return _analyzedIds.contains(transcriptionId);
+  }
+
   Future<void> analyzeSynonyms(int transcriptionId, String text) async {
-    // Don't analyze if already analyzed or currently loading
-    if (_synonymsCache.containsKey(transcriptionId) ||
+    // CRITICAL: Check if already analyzed or loading to prevent duplicates
+    if (_analyzedIds.contains(transcriptionId) ||
         _loadingIds.contains(transcriptionId)) {
       return;
     }
+
+    // Mark as analyzed immediately to prevent duplicate calls
+    _analyzedIds.add(transcriptionId);
 
     try {
       _loadingIds.add(transcriptionId);
       notifyListeners();
 
-      // Use the broader word-level synonyms endpoint to get synonyms for each word
-      final synonyms = await _geminiService.getSynonymsForWords(text);
-      _synonymsCache[transcriptionId] = synonyms;
+      print('Starting analysis for transcription $transcriptionId: $text');
 
+      // Use the broader word-level synonyms endpoint
+      final synonyms = await _geminiService.getSynonymsForWords(text);
+
+      print('Received synonyms for $transcriptionId: $synonyms');
+
+      _synonymsCache[transcriptionId] = synonyms;
       _loadingIds.remove(transcriptionId);
       notifyListeners();
     } catch (e) {
+      print('Error in TranscriptionViewModel for $transcriptionId: $e');
       _loadingIds.remove(transcriptionId);
       _synonymsCache[transcriptionId] = {};
       notifyListeners();
-      print('Error in TranscriptionViewModel: $e');
     }
   }
 
   void clearCache() {
     _synonymsCache.clear();
     _loadingIds.clear();
+    _analyzedIds.clear();
     notifyListeners();
   }
 }

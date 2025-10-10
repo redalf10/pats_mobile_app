@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:logger/logger.dart';
 import 'package:pats_app/config.dart';
@@ -34,21 +33,25 @@ class WalkieTalkieViewModel extends ChangeNotifier {
   StreamSubscription? _messageSubscription;
   StreamSubscription? _userUpdateSubscription;
   Logger logger = Logger();
-  // Allow recording alongside STT; a short delay mitigates mic contention
+
+  // Audio and STT coordination
   static const bool enableAudioRecordingDuringTalk = true;
-  // Merge window for grouping partial transcripts into a single record
-  static const int _mergeWindowMs = 3000; // Reduced to 3 seconds
+  static const int _mergeWindowMs = 6000;
+
   // Track active transcript per user to avoid duplicate records from partials
   final Map<String, int> _activeTranscriptionIdByUser = {};
   final Map<String, String> _lastTranscriptTextByUser = {};
   final Map<String, int> _lastTranscriptUpdatedAtByUser = {};
-  // Track whether we're processing a final transcript
+
   // Track role assignments locally
   final Map<String, Role> _userRoles = {};
   String? _lastError;
-  // Reserved for future adaptive logic; currently unused
-  // ignore: unused_field
   int _talkStartedAtMs = 0;
+
+  // Audio session tracking - ensures audio and STT work in sync
+  Completer<Uint8List?>? _audioRecordingCompleter;
+  bool _audioRecordingStarted = false;
+  bool _sttStarted = false;
 
   String? get lastError => _lastError;
 
@@ -87,7 +90,6 @@ class WalkieTalkieViewModel extends ChangeNotifier {
     try {
       logger.i('Starting initialization...');
 
-      // Use a Completer to handle the permission result properly
       final permissionCompleter = Completer<bool>();
 
       logger.i('Requesting permissions...');
@@ -103,13 +105,11 @@ class WalkieTalkieViewModel extends ChangeNotifier {
       final permissionGranted = await permissionCompleter.future;
       if (!permissionGranted) {
         logger.e('Required permissions denied');
-        // Emit an error state that UI can handle
         _lastError =
             'Microphone permissions are required for full functionality';
         notifyListeners();
       }
 
-      // Initialize STT engine with proper error handling
       try {
         final sttOk = await _audioService.initSpeech();
         logger.i('STT initialize result: $sttOk');
@@ -131,7 +131,6 @@ class WalkieTalkieViewModel extends ChangeNotifier {
       notifyListeners();
     } catch (e) {
       logger.e('Error during initialization: $e');
-      // Still mark as initialized so the app doesn't stay stuck
       _isInitialized = true;
       notifyListeners();
       rethrow;
@@ -178,10 +177,6 @@ class WalkieTalkieViewModel extends ChangeNotifier {
       final lastText = _lastTranscriptTextByUser[_userId];
       final lastUpdated = _lastTranscriptUpdatedAtByUser[_userId] ?? 0;
       final activeId = _activeTranscriptionIdByUser[_userId];
-
-      // If this is a significantly larger transcript, treat it as final
-      final significantWordGrowth = lastText != null &&
-          trimmed.split(' ').length > lastText.split(' ').length + 2;
       final withinWindow = ts - lastUpdated <= _mergeWindowMs;
 
       String newTextToPersist = trimmed;
@@ -190,27 +185,19 @@ class WalkieTalkieViewModel extends ChangeNotifier {
 
       if (!shouldInsertNew && lastText != null) {
         if (trimmed == lastText) {
-          // No change; do nothing to avoid duplicates
           return;
         }
-        // If STT is building up, the new text often includes previous text as prefix
         final grows = trimmed.length >= lastText.length;
         final sharesPrefix =
             grows && trimmed.toLowerCase().startsWith(lastText.toLowerCase());
         final sharesSuffix =
             grows && trimmed.toLowerCase().endsWith(lastText.toLowerCase());
-        // Also handle occasional regressions: ignore shorter regressions
         if (!grows) {
-          // Ignore shorter partials to avoid flicker/duplicates
           return;
         }
-        // If this partial is substantially larger, treat as update
-        if (significantWordGrowth) {
-          shouldUpdate = true;
-        } else if (sharesPrefix || sharesSuffix) {
+        if (sharesPrefix || sharesSuffix) {
           shouldUpdate = true;
         } else {
-          // If content diverged, start a new record
           shouldInsertNew = true;
         }
       }
@@ -232,7 +219,7 @@ class WalkieTalkieViewModel extends ChangeNotifier {
         _lastTranscriptUpdatedAtByUser[_userId] = ts;
       }
 
-      // Broadcast to peers (idempotency handled on their side with same merge logic)
+      // Broadcast to peers
       _networkService.sendTranscript(
         userId: _userId,
         userName: _userName,
@@ -242,7 +229,7 @@ class WalkieTalkieViewModel extends ChangeNotifier {
       logger.i('Broadcasted transcript: "$newTextToPersist"');
     });
 
-    // Observe STT status for diagnostics only; do not stop recording
+    // Observe STT status for diagnostics only
     _audioService.sttStatusStream.listen((status) {
       logger.d('VM observed STT status: $status');
     });
@@ -260,39 +247,30 @@ class WalkieTalkieViewModel extends ChangeNotifier {
 
       if (textMsg.isEmpty) return;
 
-      // Apply same merge logic for remote users to avoid duplicate rows
       final lastText = _lastTranscriptTextByUser[userIdMsg];
       final lastUpdated = _lastTranscriptUpdatedAtByUser[userIdMsg] ?? 0;
       final activeId = _activeTranscriptionIdByUser[userIdMsg];
       final withinWindow = ts - lastUpdated <= _mergeWindowMs;
-
-      // Determine if this is a significant update (substantially more content)
-      bool isSignificantUpdate = lastText != null &&
-          textMsg.split(' ').length > lastText.split(' ').length + 2;
 
       bool shouldInsertNew = activeId == null || !withinWindow;
       bool shouldUpdate = false;
 
       if (!shouldInsertNew && lastText != null) {
         if (textMsg == lastText) {
-          return; // no change
+          return;
         }
         final grows = textMsg.length >= lastText.length;
-        if (!grows && !isSignificantUpdate) {
-          return; // ignore shorter partials unless significant
+        final sharesPrefix =
+            grows && textMsg.toLowerCase().startsWith(lastText.toLowerCase());
+        final sharesSuffix =
+            grows && textMsg.toLowerCase().endsWith(lastText.toLowerCase());
+        if (!grows) {
+          return;
         }
-
-        // Force update if it's a significant change
-        if (isSignificantUpdate) {
+        if (sharesPrefix || sharesSuffix) {
           shouldUpdate = true;
         } else {
-          final sharesPrefix =
-              grows && textMsg.toLowerCase().startsWith(lastText.toLowerCase());
-          if (sharesPrefix) {
-            shouldUpdate = true;
-          } else {
-            shouldInsertNew = true;
-          }
+          shouldInsertNew = true;
         }
       }
 
@@ -322,7 +300,6 @@ class WalkieTalkieViewModel extends ChangeNotifier {
       final userId = message['userId'] as String?;
       final audioDataBase64 = message['data'] as String;
 
-      // Don't play back our own audio
       if (userId == _userId) {
         logger.d('Ignoring own audio message');
         return;
@@ -350,12 +327,10 @@ class WalkieTalkieViewModel extends ChangeNotifier {
       _connectionMode = ConnectionMode.server;
       _serverIP = serverIP;
 
-      // Generate room code
       final code = _roomCodeService.generateRoomCode();
       logger.i('Generated room code: $code');
       _roomCode = code;
 
-      // Only store room code metadata if not using Firebase as server
       if (!AppConfig.useFirebaseAsServer) {
         await _roomCodeService.setRoomCode(code, serverIP);
       }
@@ -363,10 +338,8 @@ class WalkieTalkieViewModel extends ChangeNotifier {
         await _localDbService.setRoom(code);
       } catch (_) {}
 
-      // Reset all roles when starting a new server
       resetAllRoles();
 
-      // Add self as a user
       String? photoUrl;
       try {
         final dynamic currentUser =
@@ -378,24 +351,21 @@ class WalkieTalkieViewModel extends ChangeNotifier {
 
       final selfUser = User(
           id: _userId, name: _userName, photoUrl: photoUrl, role: Role.pilot);
-      _users = [selfUser];
-      if (_networkService.isServer) {
-        _networkService.addSelfUser(selfUser);
 
-        // Setup Firebase room for server if using Firebase
-        if (AppConfig.useFirebaseAsServer) {
-          // Pass the server's userId so FirebaseRoomService can set presence
-          await _networkService.setupFirebaseRoom(code, userId: _userId);
-          // Send initial join message for the server user
-          _networkService.sendMessage({
-            'type': 'join',
-            'user': selfUser.toJson(),
-            'ts': DateTime.now().millisecondsSinceEpoch,
-          });
-        }
+      if (AppConfig.useFirebaseAsServer) {
+        await _networkService.setupFirebaseRoom(code, _userId);
+
+        _networkService.sendMessage({
+          'type': 'join',
+          'user': selfUser.toJson(),
+        });
+      } else {
+        _networkService.addSelfUser(selfUser);
       }
+
+      _users = [selfUser];
       notifyListeners();
-      return code; // Return the code, not the IP
+      return code;
     }
     return null;
   }
@@ -412,8 +382,6 @@ class WalkieTalkieViewModel extends ChangeNotifier {
 
     logger.i('Attempting to connect to room code: $code');
 
-    // When using Firebase as server, always pass the room code directly
-    // No need to validate room existence since Firebase will handle it
     final String serverTarget = code;
 
     final success = await _networkService.connectToServer(
@@ -440,6 +408,133 @@ class WalkieTalkieViewModel extends ChangeNotifier {
     return await NetworkInfo().getWifiIP();
   }
 
+  /// Start audio recording and STT listening in coordinated parallel
+  Future<void> _startAudioAndSTT() async {
+    _audioRecordingStarted = false;
+    _sttStarted = false;
+    _audioRecordingCompleter = Completer<Uint8List?>();
+
+    try {
+      // Start audio recording first (gives it priority on microphone)
+      if (enableAudioRecordingDuringTalk) {
+        String? recordingPath;
+        for (int attempt = 0; attempt < 3 && recordingPath == null; attempt++) {
+          try {
+            logger.i('Starting recorder (attempt ${attempt + 1})...');
+            recordingPath = await _audioService
+                .startRecording()
+                .timeout(const Duration(seconds: 3));
+
+            if (recordingPath != null) {
+              logger.i('Recorder started successfully: $recordingPath');
+              _audioRecordingStarted = true;
+            }
+          } catch (e) {
+            final backoffMs = 300 * (attempt + 1);
+            logger.w(
+                'Recorder start failed (attempt ${attempt + 1}): $e. Retrying in ${backoffMs}ms');
+            await Future.delayed(Duration(milliseconds: backoffMs));
+          }
+        }
+
+        if (!_audioRecordingStarted) {
+          logger.e('Failed to start recorder after retries');
+          _lastError =
+              'Audio recording failed to start. Please check microphone permissions.';
+          _audioRecordingCompleter?.completeError('Recording failed to start');
+          throw Exception('Recording failed to start');
+        }
+
+        // Give recorder time to stabilize
+        await Future.delayed(const Duration(milliseconds: 500));
+      }
+
+      // Start STT listening in continuous mode
+      bool sttStarted = false;
+      try {
+        logger.i('Starting STT listening...');
+        sttStarted = await _audioService
+            .startListeningContinuous()
+            .timeout(const Duration(seconds: 5));
+
+        if (sttStarted) {
+          logger.i('STT started successfully');
+          _sttStarted = true;
+        }
+      } catch (e) {
+        logger.e('STT start timeout or error: $e');
+        sttStarted = false;
+      }
+
+      if (!_sttStarted) {
+        logger.e('Failed to start STT');
+        _lastError = 'Failed to start speech recognition';
+
+        // Stop recorder if it was started but STT failed
+        if (_audioRecordingStarted) {
+          try {
+            await _audioService.stopRecording();
+            _audioRecordingStarted = false;
+          } catch (e) {
+            logger.e('Error stopping recorder after STT failure: $e');
+          }
+        }
+
+        _audioRecordingCompleter?.completeError('STT failed to start');
+        throw Exception('STT failed to start');
+      }
+
+      logger.i('Audio recording and STT started in parallel');
+    } catch (e) {
+      logger.e('Error starting audio and STT: $e');
+      _audioRecordingCompleter?.completeError(e);
+      rethrow;
+    }
+  }
+
+  /// Stop audio recording and STT, coordinating cleanup
+  Future<Uint8List?> _stopAudioAndSTT() async {
+    Uint8List? audioData;
+
+    try {
+      // Stop STT first to finalize transcription
+      if (_sttStarted) {
+        try {
+          logger.i('Stopping STT...');
+          await _audioService.stopListening();
+          _sttStarted = false;
+          logger.i('STT stopped');
+        } catch (e) {
+          logger.e('Error stopping STT: $e');
+          _lastError = 'Error processing final transcription';
+        }
+      }
+
+      // Stop audio recording and retrieve data
+      if (_audioRecordingStarted) {
+        try {
+          logger.i('Stopping audio recording...');
+          audioData = await _audioService
+              .stopRecording()
+              .timeout(const Duration(seconds: 3));
+          _audioRecordingStarted = false;
+
+          if (audioData != null && audioData.isNotEmpty) {
+            logger.i('Audio data retrieved: ${audioData.length} bytes');
+          }
+        } catch (e) {
+          logger.e('Error stopping recording: $e');
+          _lastError = 'Failed to process audio recording';
+        }
+      }
+
+      return audioData;
+    } catch (e) {
+      logger.e('Error stopping audio and STT: $e');
+      return null;
+    }
+  }
+
   Future<void> startTalking() async {
     // Clear any previous error state
     _lastError = null;
@@ -463,17 +558,15 @@ class WalkieTalkieViewModel extends ChangeNotifier {
     }
 
     // Add debounce to prevent rapid toggling
-    if (_talkStartedAtMs > 0) {
-      final now = DateTime.now().millisecondsSinceEpoch;
-      if (now - _talkStartedAtMs < 1000) {
-        logger.w('Preventing rapid toggle of talk state');
-        return;
-      }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (_talkStartedAtMs > 0 && now - _talkStartedAtMs < 1000) {
+      logger.w('Preventing rapid toggle of talk state');
+      return;
     }
 
     try {
-      // Set talking state after verifying we can start
-      _talkStartedAtMs = DateTime.now().millisecondsSinceEpoch;
+      // Set talking state
+      _talkStartedAtMs = now;
       _isTalking = true;
       notifyListeners();
 
@@ -483,57 +576,15 @@ class WalkieTalkieViewModel extends ChangeNotifier {
         await _audioService.stopRecording();
       }
 
-      // Start STT first with timeout
-      bool sttStarted = false;
-      try {
-        sttStarted = await _audioService
-            .startListening()
-            .timeout(const Duration(seconds: 5));
-      } catch (e) {
-        logger.e('STT start timeout or error: $e');
-        sttStarted = false;
-      }
+      // Start audio recording and STT in coordinated parallel
+      await _startAudioAndSTT();
 
-      if (!sttStarted) {
-        logger.e('Failed to start STT, stopping talking');
-        _lastError = 'Failed to start speech recognition';
-        await _cleanupTalkingState();
-        return;
-      }
-
-      // Update speaking status immediately after STT starts
+      // Update speaking status after both services are running
       try {
         _networkService.updateSpeakingStatus(_userId, true);
+        logger.i('Speaking status updated');
       } catch (e) {
         logger.e('Failed to update speaking status: $e');
-        // Continue anyway as this is not critical
-      }
-
-      if (enableAudioRecordingDuringTalk) {
-        // Give STT time to initialize and acquire the mic first
-        await Future.delayed(const Duration(milliseconds: 1200));
-        String? recordingPath;
-
-        // Retry starting recorder up to 3 times with small backoff
-        for (int attempt = 0; attempt < 3 && recordingPath == null; attempt++) {
-          try {
-            recordingPath = await _audioService
-                .startRecording()
-                .timeout(const Duration(seconds: 2));
-          } catch (e) {
-            final backoffMs = 200 * (attempt + 1);
-            logger.w(
-                'Recorder start failed (attempt ${attempt + 1}): $e. Retrying in ${backoffMs}ms');
-            await Future.delayed(Duration(milliseconds: backoffMs));
-          }
-        }
-
-        if (recordingPath == null) {
-          logger.e('Failed to start recorder after retries');
-          _lastError = 'Audio recording failed to start';
-          // Don't stop talking - continue with just STT
-          notifyListeners();
-        }
       }
     } catch (e) {
       logger.e('Error starting talking: $e');
@@ -590,46 +641,34 @@ class WalkieTalkieViewModel extends ChangeNotifier {
       // Update speaking status first
       _networkService.updateSpeakingStatus(_userId, false);
 
-      // Handle recording cleanup
-      Uint8List? audioData;
-      if (enableAudioRecordingDuringTalk && _audioService.isRecording) {
+      // Stop audio recording and STT in coordinated manner
+      final audioData = await _stopAudioAndSTT();
+
+      // Send audio data if available
+      if (audioData != null && audioData.isNotEmpty) {
         try {
-          logger.i('Stopping recording...');
-          audioData = await _audioService
-              .stopRecording()
-              .timeout(const Duration(seconds: 3));
+          logger.i(
+              'Sending audio data: [${audioData.length} bytes from user $_userId]');
+          _networkService.sendAudioData(audioData, _userId);
+          logger.i('Audio data sent successfully');
         } catch (e) {
-          logger.e('Error stopping recording: $e');
-          _lastError = 'Failed to process audio recording';
+          logger.e('Error sending audio data: $e');
+          _lastError = 'Failed to send audio data';
           notifyListeners();
         }
-
-        if (audioData != null && audioData.isNotEmpty) {
-          try {
-            logger.i(
-                'Sending audio data: [${audioData.length} bytes from user $_userId]');
-            _networkService.sendAudioData(audioData, _userId);
-            logger.i('Audio data sent successfully');
-          } catch (e) {
-            logger.e('Error sending audio data: $e');
-            _lastError = 'Failed to send audio data';
-            notifyListeners();
-          }
-        } else {
-          logger.w('No audio data to send');
-        }
+      } else {
+        logger.w('No audio data to send');
       }
 
-      // Stop STT and process final transcription
+      // Get final transcription
       String transcript = '';
       try {
-        await _audioService.stopListening();
         transcript = _audioService.lastTranscription.trim();
         if (transcript.isEmpty) {
           transcript = _audioService.lastNonEmptyTranscription.trim();
         }
       } catch (e) {
-        logger.e('Error stopping STT: $e');
+        logger.e('Error retrieving final transcription: $e');
         _lastError = 'Error processing final transcription';
         notifyListeners();
       }
@@ -688,25 +727,31 @@ class WalkieTalkieViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // Update speaking status first to ensure UI reflects correct state
+      // Update speaking status first
       _networkService.updateSpeakingStatus(_userId, false);
 
       // Stop recording if active
-      if (_audioService.isRecording) {
+      if (_audioRecordingStarted) {
         try {
           await _audioService
               .stopRecording()
               .timeout(const Duration(seconds: 2));
+          _audioRecordingStarted = false;
         } catch (e) {
           logger.e('Error stopping recording: $e');
         }
       }
 
       // Stop STT if active
-      try {
-        await _audioService.stopListening().timeout(const Duration(seconds: 2));
-      } catch (e) {
-        logger.e('Error stopping STT: $e');
+      if (_sttStarted) {
+        try {
+          await _audioService
+              .stopListening()
+              .timeout(const Duration(seconds: 2));
+          _sttStarted = false;
+        } catch (e) {
+          logger.e('Error stopping STT: $e');
+        }
       }
 
       // Reset all state tracking
@@ -720,7 +765,6 @@ class WalkieTalkieViewModel extends ChangeNotifier {
     } catch (e) {
       logger.e('Error during cleanup: $e');
     } finally {
-      // Ensure talking state is false
       _isTalking = false;
       notifyListeners();
     }
@@ -737,6 +781,8 @@ class WalkieTalkieViewModel extends ChangeNotifier {
       _lastTranscriptTextByUser.clear();
       _lastTranscriptUpdatedAtByUser.clear();
       _lastError = null;
+      _audioRecordingStarted = false;
+      _sttStarted = false;
       logger.i('Talking state reset successfully');
     } catch (e) {
       logger.e('Error resetting talking state: $e');
