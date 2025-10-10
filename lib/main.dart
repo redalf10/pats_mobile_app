@@ -10,6 +10,7 @@ import 'services/audio_service.dart';
 import 'services/network_service.dart';
 import 'services/local_db_service.dart';
 import 'viewmodels/walkie_talkie_viewmodel.dart';
+import 'viewmodels/transcription_viewmodel.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -38,6 +39,7 @@ class MyApp extends StatelessWidget {
         Provider<AudioService>(create: (_) => AudioService()),
         Provider<NetworkService>(create: (_) => NetworkService()),
         Provider<LocalDbService>(create: (_) => dbService),
+        ChangeNotifierProvider(create: (_) => TranscriptionViewModel()),
         ChangeNotifierProvider<WalkieTalkieViewModel>(
           create: (context) {
             final audio = context.read<AudioService>();

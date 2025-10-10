@@ -11,12 +11,17 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 class AudioService {
   final AudioRecorder _recorder = AudioRecorder();
   final AudioPlayer _player = AudioPlayer();
+  // Use ephemeral players for remote audio playback to avoid interfering
+  // with the main player or recording. Track active players for cleanup.
+  final List<AudioPlayer> _activePlayers = [];
   bool _isRecording = false;
   String? _currentRecordingPath;
   StreamSubscription? _recordingSubscription;
   stt.SpeechToText? _speech;
   String _lastTranscription = '';
   String _lastNonEmptyTranscription = '';
+  // Indicates whether recording was paused (true) or stopped (false) to allow STT
+  bool _pausedRecordingForStt = false;
   final StreamController<String> _transcriptionController =
       StreamController<String>.broadcast();
   final StreamController<String> _sttStatusController =
@@ -43,8 +48,6 @@ class AudioService {
 
       logger.i('Microphone permission status: $micStatus');
 
-      // Do NOT require storage permission. We use app-internal temp directory.
-      // On Android 10+ storage permission is scoped and often denied.
       final result = micStatus.isGranted;
       logger.i('Overall permission result (mic only): $result');
 
@@ -59,7 +62,6 @@ class AudioService {
     if (_isRecording) return null;
 
     try {
-      // Ensure microphone permission before starting
       if (!await Permission.microphone.isGranted) {
         final ok = await requestPermissions();
         if (!ok) {
@@ -100,7 +102,6 @@ class AudioService {
         final file = File(_currentRecordingPath!);
         if (await file.exists()) {
           final audioData = await file.readAsBytes();
-          // Clean up the temp file
           await file.delete();
           return audioData;
         }
@@ -114,28 +115,43 @@ class AudioService {
 
   Future<void> playAudioData(Uint8List audioData) async {
     try {
-      // Stop any currently playing audio
-      await stopAudioPlayback();
-
+      // Create a temporary file for this playback
       final directory = await getTemporaryDirectory();
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final tempFile = File('${directory.path}/temp_audio_$timestamp.wav');
 
       await tempFile.writeAsBytes(audioData);
-      _currentPlayingFile = tempFile.path;
-      _isPlaying = true;
 
-      // Set up the completion listener only once
-      _playerCompleteSubscription?.cancel();
-      _playerCompleteSubscription = _player.onPlayerComplete.listen((_) async {
-        await _cleanupAudioPlayback();
+      // Use a new AudioPlayer instance for this playback
+      final player = AudioPlayer();
+      _activePlayers.add(player);
+
+      // Clean up this player and temporary file when done
+      player.onPlayerComplete.listen((_) async {
+        try {
+          await player.stop();
+        } catch (_) {}
+        try {
+          await player.dispose();
+        } catch (_) {}
+        _activePlayers.remove(player);
+        try {
+          if (await tempFile.exists()) await tempFile.delete();
+        } catch (_) {}
       });
 
-      await _player.play(DeviceFileSource(tempFile.path));
-      logger.i('Audio playback started: ${tempFile.path}');
+      await player.play(DeviceFileSource(tempFile.path));
+      logger.i('Audio playback started (ephemeral): ${tempFile.path}');
     } catch (e) {
       logger.e('Failed to play audio: $e');
-      await _cleanupAudioPlayback();
+      // Try best-effort cleanup of any active ephemeral players
+      for (final p in List<AudioPlayer>.from(_activePlayers)) {
+        try {
+          await p.stop();
+          await p.dispose();
+        } catch (_) {}
+        _activePlayers.remove(p);
+      }
     }
   }
 
@@ -157,6 +173,17 @@ class AudioService {
       _playerCompleteSubscription?.cancel();
       _playerCompleteSubscription = null;
 
+      // Dispose any remaining ephemeral players
+      for (final p in List<AudioPlayer>.from(_activePlayers)) {
+        try {
+          await p.stop();
+        } catch (_) {}
+        try {
+          await p.dispose();
+        } catch (_) {}
+        _activePlayers.remove(p);
+      }
+
       if (_currentPlayingFile != null) {
         final file = File(_currentPlayingFile!);
         if (await file.exists()) {
@@ -172,7 +199,7 @@ class AudioService {
 
   Future<bool> initSpeech() async {
     _speech = stt.SpeechToText();
-    return await _speech!.initialize(
+    final available = await _speech!.initialize(
       onError: (e) => logger.e('STT error: $e'),
       onStatus: (s) {
         logger.d('STT status: $s');
@@ -182,10 +209,11 @@ class AudioService {
         } catch (_) {}
       },
     );
+    _isInitialized = available;
+    return available;
   }
 
   Future<bool> startListening() async {
-    // Prevent multiple simultaneous listening sessions
     if (_isListening) {
       logger.w('STT is already listening, ignoring start request');
       return true;
@@ -196,7 +224,6 @@ class AudioService {
       if (!ok) return false;
     }
 
-    // Initialize STT only once
     if (!_isInitialized) {
       _speech ??= stt.SpeechToText();
       final available = await _speech!.initialize(
@@ -219,18 +246,55 @@ class AudioService {
     _lastTranscription = '';
     _isListening = true;
 
+    // If currently recording, try to pause recording to avoid mic contention.
+    var didPauseRecording = false;
     try {
+      if (_isRecording) {
+        try {
+          // Record package supports pause(); if not available it will throw
+          await _recorder.pause();
+          didPauseRecording = true;
+          logger.i('Recording paused for STT');
+        } catch (e) {
+          logger.w(
+              'Pause not supported or failed, stopping recording before STT: $e');
+          try {
+            await _recorder.stop();
+            _isRecording = false;
+            didPauseRecording = false;
+            logger.i('Recording stopped for STT');
+          } catch (e2) {
+            logger.e('Failed to stop recording before STT: $e2');
+          }
+        }
+      }
+
+      // Start listening with more conservative timeouts and explicit handling
       await _speech!.listen(
         onResult: (result) {
-          _lastTranscription = result.recognizedWords;
-          if (_lastTranscription.isNotEmpty) {
-            _lastNonEmptyTranscription = _lastTranscription;
+          final text = result.recognizedWords.trim();
+          final isFinal = result.finalResult;
+          logger.d('STT result: "$text" (final: $isFinal)');
+
+          if (text.isNotEmpty) {
+            _lastTranscription = text;
+            _lastNonEmptyTranscription = text;
           }
-          logger.i(
-              'STT result: "${_lastTranscription}" (final: ${result.finalResult})');
+
+          // Emit partial results frequently but avoid flooding: only emit when changed
           try {
-            if (_lastTranscription.isNotEmpty) {
-              _transcriptionController.add(_lastTranscription);
+            if (isFinal) {
+              // Final result: emit and also mark last transcription
+              if (text.isNotEmpty) {
+                _transcriptionController.add(text);
+                logger.i('Final STT result emitted: "$text"');
+              }
+            } else {
+              // Partial result: emit when changed from previous partial
+              if (text.isNotEmpty && text != _lastTranscription) {
+                _transcriptionController.add(text);
+                logger.d('Partial STT result emitted: "$text"');
+              }
             }
           } catch (e) {
             logger.e('Error adding to transcription stream: $e');
@@ -238,13 +302,27 @@ class AudioService {
         },
         listenMode: stt.ListenMode.dictation,
         partialResults: true,
-        pauseFor: const Duration(seconds: 2),
-        listenFor: const Duration(seconds: 60),
+        pauseFor: const Duration(seconds: 6),
+        listenFor: const Duration(seconds: 180),
       );
+
+      // store whether we paused recording so stopListening can resume appropriately
+      _pausedRecordingForStt = didPauseRecording;
+
       return true;
     } catch (e) {
       logger.e('Error starting STT listening: $e');
       _isListening = false;
+      // try to resume recording if we paused
+      if (didPauseRecording) {
+        try {
+          await _recorder.resume();
+          _isRecording = true;
+          logger.i('Recording resumed after STT failed to start');
+        } catch (e2) {
+          logger.e('Failed to resume recording after STT start failure: $e2');
+        }
+      }
       return false;
     }
   }
@@ -258,8 +336,52 @@ class AudioService {
     try {
       await _speech?.stop();
       _isListening = false;
-      // Allow a moment for the final result to be delivered
-      await Future.delayed(const Duration(milliseconds: 800));
+
+      // Wait briefly to allow engine to push final result events (if any)
+      await Future.delayed(const Duration(milliseconds: 700));
+
+      // Ensure the last captured transcription is emitted as the final result
+      final finalText = _lastTranscription.trim();
+      if (finalText.isNotEmpty) {
+        try {
+          _transcriptionController.add(finalText);
+          logger.i('Final STT transcription emitted: "$finalText"');
+        } catch (e) {
+          logger.e('Error emitting final transcription: $e');
+        }
+      }
+
+      // If we paused recording earlier, resume it now. If we had stopped it, restart a new recording
+      try {
+        if (_pausedRecordingForStt == true) {
+          await _recorder.resume();
+          _isRecording = true;
+          logger.i('Recording resumed after STT');
+        } else if (!_isRecording && _currentRecordingPath != null) {
+          // We had stopped recording to free the mic; restart a new recording file
+          final directory = await getTemporaryDirectory();
+          final timestamp = DateTime.now().millisecondsSinceEpoch;
+          _currentRecordingPath =
+              '${directory.path}/audio_${timestamp}_resumed.wav';
+          try {
+            await _recorder.start(
+              const RecordConfig(
+                encoder: AudioEncoder.wav,
+                sampleRate: 16000,
+                bitRate: 128000,
+              ),
+              path: _currentRecordingPath!,
+            );
+            _isRecording = true;
+            logger.i('Recording restarted after STT');
+          } catch (e) {
+            logger.e('Failed to restart recording after STT: $e');
+          }
+        }
+      } catch (e) {
+        logger.e(
+            'Error while attempting to resume/restart recording after STT: $e');
+      }
     } catch (e) {
       logger.e('STT stop error: $e');
       _isListening = false;

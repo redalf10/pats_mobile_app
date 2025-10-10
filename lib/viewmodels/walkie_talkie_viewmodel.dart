@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:logger/logger.dart';
 import 'package:pats_app/config.dart';
@@ -36,11 +37,12 @@ class WalkieTalkieViewModel extends ChangeNotifier {
   // Allow recording alongside STT; a short delay mitigates mic contention
   static const bool enableAudioRecordingDuringTalk = true;
   // Merge window for grouping partial transcripts into a single record
-  static const int _mergeWindowMs = 6000;
+  static const int _mergeWindowMs = 3000; // Reduced to 3 seconds
   // Track active transcript per user to avoid duplicate records from partials
   final Map<String, int> _activeTranscriptionIdByUser = {};
   final Map<String, String> _lastTranscriptTextByUser = {};
   final Map<String, int> _lastTranscriptUpdatedAtByUser = {};
+  // Track whether we're processing a final transcript
   // Track role assignments locally
   final Map<String, Role> _userRoles = {};
   String? _lastError;
@@ -176,6 +178,10 @@ class WalkieTalkieViewModel extends ChangeNotifier {
       final lastText = _lastTranscriptTextByUser[_userId];
       final lastUpdated = _lastTranscriptUpdatedAtByUser[_userId] ?? 0;
       final activeId = _activeTranscriptionIdByUser[_userId];
+
+      // If this is a significantly larger transcript, treat it as final
+      final significantWordGrowth = lastText != null &&
+          trimmed.split(' ').length > lastText.split(' ').length + 2;
       final withinWindow = ts - lastUpdated <= _mergeWindowMs;
 
       String newTextToPersist = trimmed;
@@ -198,7 +204,10 @@ class WalkieTalkieViewModel extends ChangeNotifier {
           // Ignore shorter partials to avoid flicker/duplicates
           return;
         }
-        if (sharesPrefix || sharesSuffix) {
+        // If this partial is substantially larger, treat as update
+        if (significantWordGrowth) {
+          shouldUpdate = true;
+        } else if (sharesPrefix || sharesSuffix) {
           shouldUpdate = true;
         } else {
           // If content diverged, start a new record
@@ -257,6 +266,10 @@ class WalkieTalkieViewModel extends ChangeNotifier {
       final activeId = _activeTranscriptionIdByUser[userIdMsg];
       final withinWindow = ts - lastUpdated <= _mergeWindowMs;
 
+      // Determine if this is a significant update (substantially more content)
+      bool isSignificantUpdate = lastText != null &&
+          textMsg.split(' ').length > lastText.split(' ').length + 2;
+
       bool shouldInsertNew = activeId == null || !withinWindow;
       bool shouldUpdate = false;
 
@@ -265,17 +278,21 @@ class WalkieTalkieViewModel extends ChangeNotifier {
           return; // no change
         }
         final grows = textMsg.length >= lastText.length;
-        final sharesPrefix =
-            grows && textMsg.toLowerCase().startsWith(lastText.toLowerCase());
-        final sharesSuffix =
-            grows && textMsg.toLowerCase().endsWith(lastText.toLowerCase());
-        if (!grows) {
-          return; // ignore shorter partials
+        if (!grows && !isSignificantUpdate) {
+          return; // ignore shorter partials unless significant
         }
-        if (sharesPrefix || sharesSuffix) {
+
+        // Force update if it's a significant change
+        if (isSignificantUpdate) {
           shouldUpdate = true;
         } else {
-          shouldInsertNew = true;
+          final sharesPrefix =
+              grows && textMsg.toLowerCase().startsWith(lastText.toLowerCase());
+          if (sharesPrefix) {
+            shouldUpdate = true;
+          } else {
+            shouldInsertNew = true;
+          }
         }
       }
 
@@ -360,17 +377,15 @@ class WalkieTalkieViewModel extends ChangeNotifier {
       } catch (_) {}
 
       final selfUser = User(
-          id: _userId,
-          name: _userName,
-          photoUrl: photoUrl,
-          role: Role.pilot);
+          id: _userId, name: _userName, photoUrl: photoUrl, role: Role.pilot);
       _users = [selfUser];
       if (_networkService.isServer) {
         _networkService.addSelfUser(selfUser);
 
         // Setup Firebase room for server if using Firebase
         if (AppConfig.useFirebaseAsServer) {
-          await _networkService.setupFirebaseRoom(code);
+          // Pass the server's userId so FirebaseRoomService can set presence
+          await _networkService.setupFirebaseRoom(code, userId: _userId);
           // Send initial join message for the server user
           _networkService.sendMessage({
             'type': 'join',

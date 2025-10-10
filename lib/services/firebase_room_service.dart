@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'package:firebase_database/firebase_database.dart';
-import 'package:firebase_database_platform_interface/firebase_database_platform_interface.dart'
-    show MutableData, Transaction;
+// firebase_database.dart provides the Transaction/MutableData types we need.
 import '../models/user.dart';
 import 'package:logger/logger.dart';
 

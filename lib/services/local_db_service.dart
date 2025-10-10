@@ -13,6 +13,9 @@ class LocalDbService {
   // Cache to maintain the complete list of transcriptions
   final Map<String, Transcription> _transcriptionsCache = {};
 
+  // Track the last transcription key for updating
+  String? _lastTranscriptionKey;
+
   bool get isInitialized => _isInitialized;
 
   Future<void> init() async {
@@ -45,6 +48,83 @@ class LocalDbService {
     final ref = _roomRef!.child('transcriptions').push();
     final idStr = ref.key!;
     t.id = idStr.hashCode;
+
+    // Store the key for future updates
+    _lastTranscriptionKey = idStr;
+
+    ref.set({
+      'id': idStr,
+      'userId': userId,
+      'userName': userName,
+      'text': text,
+      'timestamp': timestamp,
+    });
+    return t;
+  }
+
+  // Add or update transcription - appends text if it's the same user speaking
+  Transcription addOrUpdateTranscription({
+    required String userId,
+    required String userName,
+    required String text,
+    required int timestamp,
+    bool isFinal = false,
+  }) {
+    if (_roomRef == null) {
+      throw StateError('Room is not set for LocalDbService');
+    }
+
+    // Check if we should update the last transcription
+    if (_lastTranscriptionKey != null &&
+        _transcriptionsCache.containsKey(_lastTranscriptionKey)) {
+      final lastTranscription = _transcriptionsCache[_lastTranscriptionKey!]!;
+
+      // Update if same user and within 5 seconds
+      final timeDiff = timestamp - lastTranscription.timestamp;
+      if (lastTranscription.userId == userId && timeDiff < 5000) {
+        // Update existing transcription
+        _roomRef!.child('transcriptions/$_lastTranscriptionKey').update({
+          'text': text,
+          'timestamp': timestamp,
+        });
+
+        // Update local cache immediately for responsiveness
+        _transcriptionsCache[_lastTranscriptionKey!] = Transcription(
+          id: lastTranscription.id,
+          userId: userId,
+          userName: userName,
+          text: text,
+          timestamp: timestamp,
+        );
+        _emitTranscriptions();
+
+        return _transcriptionsCache[_lastTranscriptionKey!]!;
+      }
+    }
+
+    // Create new transcription if final or different user
+    if (isFinal) {
+      return addTranscription(
+        userId: userId,
+        userName: userName,
+        text: text,
+        timestamp: timestamp,
+      );
+    }
+
+    // For non-final results, still create but mark for potential update
+    final t = Transcription(
+      userId: userId,
+      userName: userName,
+      text: text,
+      timestamp: timestamp,
+    );
+    final ref = _roomRef!.child('transcriptions').push();
+    final idStr = ref.key!;
+    t.id = idStr.hashCode;
+
+    _lastTranscriptionKey = idStr;
+
     ref.set({
       'id': idStr,
       'userId': userId,
@@ -82,6 +162,7 @@ class LocalDbService {
       _roomRef!.child('transcriptions').remove();
     }
     _transcriptionsCache.clear();
+    _lastTranscriptionKey = null;
     _emitTranscriptions();
   }
 
@@ -129,6 +210,7 @@ class LocalDbService {
       print('Error canceling subscriptions: $e');
     }
     _transcriptionsCache.clear();
+    _lastTranscriptionKey = null;
   }
 
   Future<void> setRoom(String roomCode) async {
@@ -142,6 +224,7 @@ class LocalDbService {
 
     // Clear cache for new room
     _transcriptionsCache.clear();
+    _lastTranscriptionKey = null;
 
     final db = FirebaseDatabase.instance.ref();
     _roomRef = db.child('rooms/$roomCode');
@@ -159,6 +242,16 @@ class LocalDbService {
           text: (m['text'] ?? '') as String,
           timestamp: (m['timestamp'] ?? 0) as int,
         );
+      }
+      // Set the last key to the most recent transcription
+      if (data.isNotEmpty) {
+        final sorted = data.entries.toList()
+          ..sort((a, b) {
+            final aTime = (a.value as Map)['timestamp'] ?? 0;
+            final bTime = (b.value as Map)['timestamp'] ?? 0;
+            return (bTime as int).compareTo(aTime as int);
+          });
+        _lastTranscriptionKey = sorted.first.key;
       }
     }
     _emitTranscriptions();
@@ -182,6 +275,7 @@ class LocalDbService {
             text: (m['text'] ?? '') as String,
             timestamp: (m['timestamp'] ?? 0) as int,
           );
+          _lastTranscriptionKey = key;
           _emitTranscriptions();
         }
       }
@@ -213,7 +307,11 @@ class LocalDbService {
         .onChildRemoved
         .listen((DatabaseEvent event) {
       if (event.snapshot.key != null) {
-        _transcriptionsCache.remove(event.snapshot.key!);
+        final key = event.snapshot.key!;
+        if (_lastTranscriptionKey == key) {
+          _lastTranscriptionKey = null;
+        }
+        _transcriptionsCache.remove(key);
         _emitTranscriptions();
       }
     });

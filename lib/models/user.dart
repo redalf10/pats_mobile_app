@@ -14,7 +14,7 @@ class User {
     this.isSpeaking = false,
     this.ipAddress = '',
     this.photoUrl,
-    this.role = Role.pilot,  // Changed default role to pilot
+    this.role = Role.pilot, // Changed default role to pilot
   });
 
   User copyWith({
@@ -58,7 +58,7 @@ class User {
               (e) => e.toString().split('.').last == json['role'],
               orElse: () => Role.pilot,
             )
-          : Role.pilot,  // Changed default role to pilot
+          : Role.pilot, // Changed default role to pilot
     );
   }
 }

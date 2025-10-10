@@ -138,7 +138,7 @@ class NetworkService {
                 id: userId,
                 name: userName,
                 photoUrl: photoUrl,
-                role: Role.pilot)  // All users join as pilots
+                role: Role.pilot) // All users join as pilots
             .toJson(),
       });
 
@@ -186,14 +186,14 @@ class NetworkService {
     _messageController.add(message);
   }
 
-  Future<void> setupFirebaseRoom(String code) async {
+  Future<void> setupFirebaseRoom(String code, {required String userId}) async {
     try {
       logger.i('Setting up Firebase room for server: $code');
 
       // Create new FirebaseRoomService instance
       final roomService = FirebaseRoomService(
         roomCode: code,
-        userId: '', // Will be set when user is added
+        userId: userId,
         onMessage: _handleFirebaseMessage,
         onUsersChanged: (users) {
           _connectedUsers.clear();
