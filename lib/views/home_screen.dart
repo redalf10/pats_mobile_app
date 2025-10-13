@@ -55,16 +55,16 @@ class _WalkieTalkieViewState extends State<WalkieTalkieView> {
         backgroundColor: Colors.transparent,
         title: const Text('Home'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.history),
-            tooltip: 'Transcription History',
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                    builder: (_) => const TranscriptionHistoryPage()),
-              );
-            },
-          ),
+          // IconButton(
+          //   icon: const Icon(Icons.history),
+          //   tooltip: 'Transcription History',
+          //   onPressed: () {
+          //     Navigator.of(context).push(
+          //       MaterialPageRoute(
+          //           builder: (_) => const TranscriptionHistoryPage()),
+          //     );
+          //   },
+          // ),
           const ThemeToggleButton(),
           const SizedBox(width: 8),
           Consumer<WalkieTalkieViewModel>(

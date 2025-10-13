@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:google_generative_ai/google_generative_ai.dart';
 
@@ -88,6 +89,37 @@ Respond ONLY with the word:synonym format, one per line. No explanations or extr
     } catch (e) {
       print('Error getting synonyms for words: $e');
       return {};
+    }
+  }
+
+  /// Transcribe audio data to text using Gemini.
+  /// Returns the transcribed text or null if failed.
+  Future<String?> transcribeAudio(Uint8List audioData) async {
+    try {
+      final prompt =
+          'Transcribe this audio accurately. Provide only the transcribed text, no additional comments or formatting.';
+
+      final content = [
+        Content.multi([
+          TextPart(prompt),
+          DataPart('audio/wav', audioData),
+        ])
+      ];
+
+      final response = await _model
+          .generateContent(content)
+          .timeout(const Duration(seconds: 30));
+
+      if (response.text != null && response.text!.trim().isNotEmpty) {
+        return response.text!.trim();
+      }
+      return null;
+    } on TimeoutException catch (e) {
+      print('Timeout transcribing audio: $e');
+      return null;
+    } catch (e) {
+      print('Error transcribing audio: $e');
+      return null;
     }
   }
 }

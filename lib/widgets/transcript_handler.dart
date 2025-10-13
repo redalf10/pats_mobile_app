@@ -1,11 +1,11 @@
 import 'dart:async';
 
 import 'package:pats_app/services/audio_service.dart';
-import 'package:pats_app/services/local_db_service.dart';
+import 'package:pats_app/services/firebase_service.dart';
 
 class TranscriptionHandler {
   final AudioService _audioService;
-  final LocalDbService _dbService;
+  final FirebaseDbService _dbService;
   StreamSubscription<String>? _transcriptionSubscription;
   StreamSubscription<String>? _sttStatusSubscription;
   String? _currentUserId;
@@ -16,7 +16,7 @@ class TranscriptionHandler {
 
   TranscriptionHandler({
     required AudioService audioService,
-    required LocalDbService dbService,
+    required FirebaseDbService dbService,
   })  : _audioService = audioService,
         _dbService = dbService;
 

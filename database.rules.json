@@ -35,6 +35,27 @@
               ".validate": "newData.isNumber()"
             }
           }
+        },
+        "transcriptions": {
+          "$transcriptionId": {
+            ".read": true,
+            ".write": true,
+            "id": {
+              ".validate": "newData.isString()"
+            },
+            "userId": {
+              ".validate": "newData.isString()"
+            },
+            "userName": {
+              ".validate": "newData.isString()"
+            },
+            "text": {
+              ".validate": "newData.isString()"
+            },
+            "timestamp": {
+              ".validate": "newData.isNumber()"
+            }
+          }
         }
       }
     }

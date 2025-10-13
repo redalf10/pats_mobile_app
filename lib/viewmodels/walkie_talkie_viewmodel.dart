@@ -3,14 +3,16 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:logger/logger.dart';
 import 'package:pats_app/config.dart';
+import 'package:pats_app/models/transcription.dart';
 import 'package:uuid/uuid.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import '../models/user.dart';
 import '../services/audio_service.dart';
 import '../services/network_service.dart';
 import '../services/room_code_service.dart';
-import '../services/local_db_service.dart'
+import '../services/firebase_service.dart'
     if (dart.library.html) '../services/local_db_service_web.dart';
+import '../services/gemini_service.dart';
 
 typedef UserGetter = dynamic Function();
 
@@ -19,7 +21,8 @@ enum ConnectionMode { server, client, disconnected }
 class WalkieTalkieViewModel extends ChangeNotifier {
   final AudioService _audioService;
   final NetworkService _networkService;
-  final LocalDbService _localDbService;
+  final FirebaseDbService _localDbService;
+  final GeminiService _geminiService;
   final String _userId;
   final String _userName;
   final RoomCodeService _roomCodeService = RoomCodeService();
@@ -39,7 +42,7 @@ class WalkieTalkieViewModel extends ChangeNotifier {
   static const int _mergeWindowMs = 6000;
 
   // Track active transcript per user to avoid duplicate records from partials
-  final Map<String, int> _activeTranscriptionIdByUser = {};
+  final Map<String, String> _activeTranscriptionKeyByUser = {};
   final Map<String, String> _lastTranscriptTextByUser = {};
   final Map<String, int> _lastTranscriptUpdatedAtByUser = {};
 
@@ -62,10 +65,12 @@ class WalkieTalkieViewModel extends ChangeNotifier {
     required String userName,
     required AudioService audioService,
     required NetworkService networkService,
-    required LocalDbService localDbService,
+    required FirebaseDbService localDbService,
+    required GeminiService geminiService,
   })  : _audioService = audioService,
         _networkService = networkService,
         _localDbService = localDbService,
+        _geminiService = geminiService,
         _userName = userName,
         _userId = const Uuid().v4();
 
@@ -89,6 +94,15 @@ class WalkieTalkieViewModel extends ChangeNotifier {
   Future<void> initialize() async {
     try {
       logger.i('Starting initialization...');
+
+      // CRITICAL FIX: Initialize the database service FIRST
+      try {
+        await _localDbService.init();
+        logger.i('Database service initialized');
+      } catch (e) {
+        logger.e('Error initializing database service: $e');
+        // Continue even if DB init fails
+      }
 
       final permissionCompleter = Completer<bool>();
 
@@ -139,10 +153,25 @@ class WalkieTalkieViewModel extends ChangeNotifier {
 
   void forceInitialize() {
     logger.i('Force initializing app...');
+
+    // CRITICAL FIX: Initialize database service
+    _localDbService.init().then((_) {
+      logger.i('Database service initialized (force init)');
+    }).catchError((e) {
+      logger.e('Error initializing database service (force init): $e');
+    });
+
     _setupNetworkListeners();
     _isInitialized = true;
     notifyListeners();
   }
+
+  // void forceInitialize() {
+  //   logger.i('Force initializing app...');
+  //   _setupNetworkListeners();
+  //   _isInitialized = true;
+  //   notifyListeners();
+  // }
 
   void _setupNetworkListeners() {
     _messageSubscription = _networkService.messageStream.listen((message) {
@@ -173,60 +202,22 @@ class WalkieTalkieViewModel extends ChangeNotifier {
       if (trimmed.isEmpty) return;
       final ts = DateTime.now().millisecondsSinceEpoch;
 
-      // Merge logic: update existing active record for this user if within window
-      final lastText = _lastTranscriptTextByUser[_userId];
-      final lastUpdated = _lastTranscriptUpdatedAtByUser[_userId] ?? 0;
-      final activeId = _activeTranscriptionIdByUser[_userId];
-      final withinWindow = ts - lastUpdated <= _mergeWindowMs;
-
-      String newTextToPersist = trimmed;
-      bool shouldUpdate = false;
-      bool shouldInsertNew = activeId == null || !withinWindow;
-
-      if (!shouldInsertNew && lastText != null) {
-        if (trimmed == lastText) {
-          return;
-        }
-        final grows = trimmed.length >= lastText.length;
-        final sharesPrefix =
-            grows && trimmed.toLowerCase().startsWith(lastText.toLowerCase());
-        final sharesSuffix =
-            grows && trimmed.toLowerCase().endsWith(lastText.toLowerCase());
-        if (!grows) {
-          return;
-        }
-        if (sharesPrefix || sharesSuffix) {
-          shouldUpdate = true;
-        } else {
-          shouldInsertNew = true;
-        }
-      }
-
-      if (shouldInsertNew) {
-        final rec = _localDbService.addTranscription(
-          userId: _userId,
-          userName: _userName,
-          text: newTextToPersist,
-          timestamp: ts,
-        );
-        _activeTranscriptionIdByUser[_userId] = rec.id;
-        _lastTranscriptTextByUser[_userId] = newTextToPersist;
-        _lastTranscriptUpdatedAtByUser[_userId] = ts;
-      } else if (shouldUpdate && activeId != null) {
-        _localDbService.updateTranscriptionText(
-            id: activeId, newText: newTextToPersist);
-        _lastTranscriptTextByUser[_userId] = newTextToPersist;
-        _lastTranscriptUpdatedAtByUser[_userId] = ts;
-      }
+      // Always insert a new transcription record
+      final rec = _localDbService.addTranscription(
+        userId: _userId,
+        userName: _userName,
+        text: trimmed,
+        timestamp: ts,
+      );
 
       // Broadcast to peers
       _networkService.sendTranscript(
         userId: _userId,
         userName: _userName,
-        text: newTextToPersist,
+        text: trimmed,
         timestamp: ts,
       );
-      logger.i('Broadcasted transcript: "$newTextToPersist"');
+      logger.i('Broadcasted transcript: "$trimmed"');
     });
 
     // Observe STT status for diagnostics only
@@ -249,24 +240,23 @@ class WalkieTalkieViewModel extends ChangeNotifier {
 
       final lastText = _lastTranscriptTextByUser[userIdMsg];
       final lastUpdated = _lastTranscriptUpdatedAtByUser[userIdMsg] ?? 0;
-      final activeId = _activeTranscriptionIdByUser[userIdMsg];
+      final activeKey = _activeTranscriptionKeyByUser[userIdMsg];
       final withinWindow = ts - lastUpdated <= _mergeWindowMs;
 
-      bool shouldInsertNew = activeId == null || !withinWindow;
+      bool shouldInsertNew = activeKey == null || !withinWindow;
       bool shouldUpdate = false;
 
       if (!shouldInsertNew && lastText != null) {
-        if (textMsg == lastText) {
-          return;
-        }
+        if (textMsg == lastText) return;
+
         final grows = textMsg.length >= lastText.length;
         final sharesPrefix =
             grows && textMsg.toLowerCase().startsWith(lastText.toLowerCase());
         final sharesSuffix =
             grows && textMsg.toLowerCase().endsWith(lastText.toLowerCase());
-        if (!grows) {
-          return;
-        }
+
+        if (!grows) return;
+
         if (sharesPrefix || sharesSuffix) {
           shouldUpdate = true;
         } else {
@@ -281,18 +271,32 @@ class WalkieTalkieViewModel extends ChangeNotifier {
           text: textMsg,
           timestamp: ts,
         );
-        _activeTranscriptionIdByUser[userIdMsg] = rec.id;
+        // Store the Firebase key, not the ID
+        _activeTranscriptionKeyByUser[userIdMsg] = _getTranscriptionKey(rec);
         _lastTranscriptTextByUser[userIdMsg] = textMsg;
         _lastTranscriptUpdatedAtByUser[userIdMsg] = ts;
-      } else if (shouldUpdate && activeId != null) {
-        _localDbService.updateTranscriptionText(id: activeId, newText: textMsg);
+      } else if (shouldUpdate && activeKey != null) {
+        // Use the key directly for updates
+        _localDbService.updateTranscriptionText(
+            transcriptionKey: activeKey, newText: textMsg);
         _lastTranscriptTextByUser[userIdMsg] = textMsg;
         _lastTranscriptUpdatedAtByUser[userIdMsg] = ts;
       }
-      logger.i('Saved/merged transcript to local DB for $userNameMsg');
     } catch (e) {
       logger.e('Error handling transcript message: $e');
     }
+  }
+
+  // Helper method to get transcription key
+  String _getTranscriptionKey(Transcription transcription) {
+    // Since we don't have direct access to the key, we need to find it in cache
+    for (final entry in _localDbService.getAllNewestFirst().asMap().entries) {
+      if (entry.value.id == transcription.id) {
+        // This is a simplification - you might need a better way to track keys
+        return entry.key.toString();
+      }
+    }
+    return transcription.id.toString();
   }
 
   void _handleAudioMessage(Map<String, dynamic> message) {
@@ -673,15 +677,30 @@ class WalkieTalkieViewModel extends ChangeNotifier {
         notifyListeners();
       }
 
+      // Use Gemini for more accurate final transcription if audio data is available
+      if (audioData != null && audioData.isNotEmpty) {
+        try {
+          final geminiTranscript =
+              await _geminiService.transcribeAudio(audioData);
+          if (geminiTranscript != null && geminiTranscript.isNotEmpty) {
+            transcript = geminiTranscript.trim();
+            logger.i('Used Gemini transcription: "$transcript"');
+          }
+        } catch (e) {
+          logger.e('Error transcribing with Gemini: $e');
+          // Fall back to speech_to_text transcript
+        }
+      }
+
       // Save and broadcast final transcription if available
       if (transcript.isNotEmpty) {
         try {
           final ts = DateTime.now().millisecondsSinceEpoch;
-          final activeId = _activeTranscriptionIdByUser[_userId];
+          final activeKey = _activeTranscriptionKeyByUser[_userId];
 
-          if (activeId != null) {
+          if (activeKey != null) {
             await _localDbService.updateTranscriptionText(
-                id: activeId, newText: transcript);
+                transcriptionKey: activeKey, newText: transcript);
             _lastTranscriptTextByUser[_userId] = transcript;
             _lastTranscriptUpdatedAtByUser[_userId] = ts;
           } else {
@@ -691,7 +710,7 @@ class WalkieTalkieViewModel extends ChangeNotifier {
               text: transcript,
               timestamp: ts,
             );
-            _activeTranscriptionIdByUser[_userId] = rec.id;
+            _activeTranscriptionKeyByUser[_userId] = _getTranscriptionKey(rec);
             _lastTranscriptTextByUser[_userId] = transcript;
             _lastTranscriptUpdatedAtByUser[_userId] = ts;
           }
@@ -705,13 +724,11 @@ class WalkieTalkieViewModel extends ChangeNotifier {
           );
         } catch (e) {
           logger.e('Error saving/sending transcript: $e');
-          _lastError = 'Failed to save transcription';
-          notifyListeners();
         }
       }
 
       // Clear state for next session
-      _activeTranscriptionIdByUser.remove(_userId);
+      _activeTranscriptionKeyByUser.remove(_userId);
       _lastTranscriptTextByUser.remove(_userId);
       _lastTranscriptUpdatedAtByUser.remove(_userId);
     } catch (e) {
@@ -759,7 +776,7 @@ class WalkieTalkieViewModel extends ChangeNotifier {
       _lastError = null;
 
       // Clear any active transcriptions
-      _activeTranscriptionIdByUser.remove(_userId);
+      _activeTranscriptionKeyByUser.remove(_userId);
       _lastTranscriptTextByUser.remove(_userId);
       _lastTranscriptUpdatedAtByUser.remove(_userId);
     } catch (e) {
@@ -777,7 +794,7 @@ class WalkieTalkieViewModel extends ChangeNotifier {
         await _cleanupTalkingState();
       }
       await _audioService.resetSTT();
-      _activeTranscriptionIdByUser.clear();
+      _activeTranscriptionKeyByUser.clear();
       _lastTranscriptTextByUser.clear();
       _lastTranscriptUpdatedAtByUser.clear();
       _lastError = null;

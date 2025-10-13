@@ -2,7 +2,7 @@ import 'dart:async';
 import 'package:firebase_database/firebase_database.dart';
 import '../models/transcription.dart';
 
-class LocalDbService {
+class FirebaseDbService {
   late final StreamController<List<Transcription>> _transcriptionsController;
   bool _isInitialized = false;
   DatabaseReference? _roomRef;
@@ -167,33 +167,48 @@ class LocalDbService {
   }
 
   bool updateTranscriptionText({
-    required int id,
+    required String transcriptionKey, // Change to string key
     required String newText,
   }) {
-    // Find the transcription in cache and update
-    final key = _transcriptionsCache.keys.firstWhere(
-      (k) => k.hashCode == id,
-      orElse: () => '',
-    );
+    print(
+        '🔥 updateTranscriptionText called - key: $transcriptionKey, text: "$newText"');
+    print('🔥 Cache keys: ${_transcriptionsCache.keys}');
+    if (_roomRef != null &&
+        _transcriptionsCache.containsKey(transcriptionKey)) {
+      print('🔥 Key found in cache, updating...');
 
-    if (key.isNotEmpty && _roomRef != null) {
-      _roomRef!.child('transcriptions/$key').update({'text': newText});
+      // Update in Firebase
+      _roomRef!.child('transcriptions/$transcriptionKey').update({
+        'text': newText,
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      });
 
-      // Update cache
-      final t = _transcriptionsCache[key];
-      if (t != null) {
-        _transcriptionsCache[key] = Transcription(
-          id: t.id,
-          userId: t.userId,
-          userName: t.userName,
-          text: newText,
-          timestamp: t.timestamp,
-        );
-        _emitTranscriptions();
-      }
+      // Update local cache
+      final t = _transcriptionsCache[transcriptionKey]!;
+      _transcriptionsCache[transcriptionKey] = Transcription(
+        id: t.id,
+        userId: t.userId,
+        userName: t.userName,
+        text: newText,
+        timestamp: t.timestamp,
+      );
+
+      _emitTranscriptions();
       return true;
+    } else {
+      print('🔥 Key not found in cache or roomRef is null');
     }
     return false;
+  }
+
+  // Add method to get transcription key by ID if needed
+  String? getTranscriptionKeyById(int id) {
+    for (final entry in _transcriptionsCache.entries) {
+      if (entry.value.id == id) {
+        return entry.key;
+      }
+    }
+    return null;
   }
 
   void dispose() {

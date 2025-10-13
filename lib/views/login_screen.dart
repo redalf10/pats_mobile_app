@@ -60,11 +60,11 @@ class LoginScreen extends StatelessWidget {
                       await AuthService.instance.signInWithGoogle();
                     } catch (e) {
                       if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('Sign-in failed: $e'),
-                          ),
-                        );
+                        // ScaffoldMessenger.of(context).showSnackBar(
+                        //   SnackBar(
+                        //     content: Text('Sign-in failed: $e'),
+                        //   ),
+                        // );
                       }
                     }
                   }),

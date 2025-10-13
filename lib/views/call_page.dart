@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:pats_app/models/user.dart';
 import 'package:pats_app/services/audio_service.dart';
-import 'package:pats_app/services/local_db_service.dart';
+import 'package:pats_app/services/firebase_service.dart';
 import 'package:pats_app/widgets/transcript_handler.dart';
 import 'package:pats_app/widgets/user_list_widget.dart';
 import 'package:provider/provider.dart';
@@ -24,7 +24,7 @@ class CallPage extends StatefulWidget {
 
 class _CallPageState extends State<CallPage> {
   late AudioService _audioService;
-  late LocalDbService _dbService;
+  late FirebaseDbService _dbService;
   late TranscriptionHandler _transcriptionHandler;
 
   // Mock users list - replace with your actual user management
@@ -35,7 +35,7 @@ class _CallPageState extends State<CallPage> {
   void initState() {
     super.initState();
     _audioService = AudioService();
-    _dbService = context.read<LocalDbService>();
+    _dbService = context.read<FirebaseDbService>();
     _transcriptionHandler = TranscriptionHandler(
       audioService: _audioService,
       dbService: _dbService,

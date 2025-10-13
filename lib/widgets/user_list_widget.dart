@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/user.dart';
 import '../models/transcription.dart';
-import '../services/local_db_service.dart';
+import '../services/firebase_service.dart';
 import '../config/theme_config.dart';
 import '../viewmodels/transcription_viewmodel.dart';
 
@@ -288,144 +288,160 @@ class UserListWidget extends StatelessWidget {
             ),
           ),
 
-          // FIXED: Synonyms section with proper analysis trigger
-          // Consumer<TranscriptionViewModel>(
-          //   builder: (context, viewModel, child) {
-          //     final transcriptionId = transcription.timestamp;
-          //     final isLoading =
-          //         viewModel.isLoadingForTranscription(transcriptionId);
-          //     final synonyms =
-          //         viewModel.getSynonymsForTranscription(transcriptionId);
-          //     final hasBeenAnalyzed =
-          //         viewModel.hasBeenAnalyzed(transcriptionId);
+          // Synonyms section with proper analysis trigger
+          Consumer<TranscriptionViewModel>(
+            builder: (context, viewModel, child) {
+              final transcriptionId = transcription.timestamp;
+              final isLoading =
+                  viewModel.isLoadingForTranscription(transcriptionId);
+              final synonyms =
+                  viewModel.getSynonymsForTranscription(transcriptionId);
+              final hasBeenAnalyzed =
+                  viewModel.hasBeenAnalyzed(transcriptionId);
 
-          //     // CRITICAL FIX: Only trigger analysis once using hasBeenAnalyzed check
-          //     if (!hasBeenAnalyzed && !isLoading) {
-          //       // Use Future.microtask to avoid calling during build
-          //       Future.microtask(() {
-          //         viewModel.analyzeSynonyms(
-          //             transcriptionId, transcription.text);
-          //       });
-          //     }
+              // Only trigger analysis once using hasBeenAnalyzed check
+              if (!hasBeenAnalyzed && !isLoading) {
+                // Use Future.microtask to avoid calling during build
+                Future.microtask(() {
+                  viewModel.analyzeSynonyms(
+                      transcriptionId, transcription.text);
+                });
+              }
 
-          //     if (isLoading) {
-          //       return Padding(
-          //         padding: const EdgeInsets.only(top: 12.0),
-          //         child: Row(
-          //           children: [
-          //             const SizedBox(
-          //               width: 14,
-          //               height: 14,
-          //               child: CircularProgressIndicator(
-          //                 color: AppTheme.secondaryColor,
-          //                 strokeWidth: 2,
-          //               ),
-          //             ),
-          //             const SizedBox(width: 8),
-          //             Text(
-          //               'Analyzing aviation terms...',
-          //               style: TextStyle(
-          //                 fontSize: 11,
-          //                 color: theme.colorScheme.onSurface.withOpacity(0.6),
-          //                 fontStyle: FontStyle.italic,
-          //               ),
-          //             ),
-          //           ],
-          //         ),
-          //       );
-          //     }
+              if (isLoading) {
+                return Padding(
+                  padding: const EdgeInsets.only(top: 12.0),
+                  child: Row(
+                    children: [
+                      const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          color: AppTheme.secondaryColor,
+                          strokeWidth: 2,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Analyzing aviation terms...',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: theme.colorScheme.onSurface.withOpacity(0.6),
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }
 
-          //     if (synonyms.isEmpty) {
-          //       return const SizedBox.shrink();
-          //     }
+              if (synonyms.isEmpty) {
+                return Container(
+                  padding: const EdgeInsets.all(5),
+                  decoration: BoxDecoration(
+                    color: theme.dividerColor.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: const Text('No Suggestions'),
+                );
+              }
 
-          //     return Container(
-          //       margin: const EdgeInsets.only(top: 12),
-          //       padding: const EdgeInsets.all(10),
-          //       decoration: BoxDecoration(
-          //         color: AppTheme.secondaryColor.withOpacity(0.05),
-          //         borderRadius: BorderRadius.circular(8),
-          //         border: Border.all(
-          //           color: AppTheme.secondaryColor.withOpacity(0.15),
-          //           width: 1,
-          //         ),
-          //       ),
-          //       child: Column(
-          //         crossAxisAlignment: CrossAxisAlignment.start,
-          //         children: [
-          //           Row(
-          //             children: [
-          //               Icon(
-          //                 Icons.lightbulb_outline,
-          //                 size: 14,
-          //                 color: AppTheme.secondaryColor.withOpacity(0.7),
-          //               ),
-          //               const SizedBox(width: 6),
-          //               Text(
-          //                 'Aviation Terms',
-          //                 style: TextStyle(
-          //                   fontSize: 11,
-          //                   fontWeight: FontWeight.w600,
-          //                   color: AppTheme.secondaryColor.withOpacity(0.9),
-          //                   letterSpacing: 0.3,
-          //                 ),
-          //               ),
-          //             ],
-          //           ),
-          //           const SizedBox(height: 8),
-          //           Wrap(
-          //             spacing: 6,
-          //             runSpacing: 6,
-          //             children: synonyms.entries.map((entry) {
-          //               return Container(
-          //                 padding: const EdgeInsets.symmetric(
-          //                   horizontal: 10,
-          //                   vertical: 6,
-          //                 ),
-          //                 decoration: BoxDecoration(
-          //                   color: Colors.white,
-          //                   borderRadius: BorderRadius.circular(6),
-          //                   border: Border.all(
-          //                     color: AppTheme.secondaryColor.withOpacity(0.2),
-          //                     width: 1,
-          //                   ),
-          //                 ),
-          //                 child: RichText(
-          //                   text: TextSpan(
-          //                     children: [
-          //                       TextSpan(
-          //                         text: '${entry.key}: ',
-          //                         style: TextStyle(
-          //                           fontSize: 12,
-          //                           fontWeight: FontWeight.w600,
-          //                           color: AppTheme.secondaryColor,
-          //                         ),
-          //                       ),
-          //                       TextSpan(
-          //                         text: entry.value.join(', '),
-          //                         style: TextStyle(
-          //                           fontSize: 12,
-          //                           color: theme.colorScheme.onSurface
-          //                               .withOpacity(0.8),
-          //                         ),
-          //                       ),
-          //                     ],
-          //                   ),
-          //                 ),
-          //               );
-          //             }).toList(),
-          //           ),
-          //         ],
-          //       ),
-          //     );
-          //   },
-          // ),
+              return Container(
+                margin: const EdgeInsets.only(top: 12),
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: AppTheme.secondaryColor.withOpacity(0.05),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: AppTheme.secondaryColor.withOpacity(0.15),
+                    width: 1,
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.lightbulb_outline,
+                          size: 14,
+                          color: AppTheme.secondaryColor.withOpacity(0.7),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Aviation Terms',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: AppTheme.secondaryColor.withOpacity(0.9),
+                            letterSpacing: 0.3,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: synonyms.entries.map((entry) {
+                        return Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                              color: AppTheme.secondaryColor.withOpacity(0.2),
+                              width: 1,
+                            ),
+                          ),
+                          child: RichText(
+                            text: TextSpan(
+                              children: [
+                                TextSpan(
+                                  text: '${entry.key}: ',
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppTheme.secondaryColor,
+                                  ),
+                                ),
+                                TextSpan(
+                                  text: entry.value.join(', '),
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: theme.colorScheme.onSurface
+                                        .withOpacity(0.8),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
         ],
       ),
     );
   }
 
   Widget _buildTranscriptSection(BuildContext context) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final transcriptions =
+          context.read<FirebaseDbService>().getAllNewestFirst();
+      print('🔄 Current transcriptions in DB: ${transcriptions.length}');
+      for (var t in transcriptions) {
+        print('   - ${t.userName}: "${t.text}" (id: ${t.id})');
+      }
+    });
+
     final theme = Theme.of(context);
 
     return Container(
@@ -474,8 +490,9 @@ class UserListWidget extends StatelessWidget {
           const SizedBox(height: 12),
           ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: 400),
-            child: Consumer<LocalDbService>(
+            child: Consumer<FirebaseDbService>(
               builder: (context, dbService, child) {
+                // FIXED: Check if database is initialized properly
                 if (!dbService.isInitialized) {
                   return Center(
                     child: Column(
@@ -497,6 +514,7 @@ class UserListWidget extends StatelessWidget {
                   );
                 }
 
+                // FIXED: Use the correct stream method that exists in your service
                 return StreamBuilder<List<Transcription>>(
                   stream: dbService.watchAllNewestFirst(),
                   builder: (context, snapshot) {
@@ -523,6 +541,10 @@ class UserListWidget extends StatelessWidget {
                     }
 
                     final transcriptions = snapshot.data ?? [];
+
+                    // Debug logging
+                    debugPrint(
+                        'Transcriptions count: ${transcriptions.length}');
 
                     if (transcriptions.isEmpty) {
                       return Center(
@@ -672,7 +694,7 @@ class UserListWidget extends StatelessWidget {
   }
 
   void _clearTranscriptions(BuildContext context) {
-    final dbService = context.read<LocalDbService>();
+    final dbService = context.read<FirebaseDbService>();
     dbService.clearAllTranscriptions();
   }
 }
