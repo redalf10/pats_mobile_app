@@ -309,7 +309,7 @@ class _WalkieTalkieViewState extends State<WalkieTalkieView> {
                     isTalking: viewModel.isTalking,
                     onTalkStart: viewModel.startTalking,
                     onTalkEnd: viewModel.stopTalking,
-                    enabled: viewModel.myRole != Role.inspector,
+                    enabled: viewModel.myRole != Role.tower2,
                   ),
                   const SizedBox(height: 40),
                 ],

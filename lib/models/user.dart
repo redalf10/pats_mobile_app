@@ -14,7 +14,7 @@ class User {
     this.isSpeaking = false,
     this.ipAddress = '',
     this.photoUrl,
-    this.role = Role.pilot, // Changed default role to pilot
+    this.role = Role.tower1, // Changed default role to pilot
   });
 
   User copyWith({
