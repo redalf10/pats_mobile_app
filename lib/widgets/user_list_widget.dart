@@ -36,6 +36,32 @@ class UserListWidget extends StatelessWidget {
     );
   }
 
+  Color _getRoleColor(UserRole role) {
+    switch (role) {
+      case UserRole.pilot1:
+        return Colors.blue;
+      case UserRole.pilot2:
+        return Colors.cyan;
+      case UserRole.tower:
+        return Colors.orange;
+      case UserRole.inspector:
+        return Colors.grey;
+    }
+  }
+
+  String _getRoleDisplayName(UserRole role) {
+    switch (role) {
+      case UserRole.pilot1:
+        return 'PILOT 1';
+      case UserRole.pilot2:
+        return 'PILOT 2';
+      case UserRole.tower:
+        return 'TOWER';
+      case UserRole.inspector:
+        return 'INSPECTOR';
+    }
+  }
+
   Widget _buildUserCard(User user, ThemeData theme) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -86,16 +112,44 @@ class UserListWidget extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 6),
-                Text(
-                  user.isSpeaking ? 'Speaking...' : 'Listening',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: user.isSpeaking
-                        ? AppTheme.secondaryColor
-                        : theme.colorScheme.onSurface.withOpacity(0.7),
-                    fontWeight:
-                        user.isSpeaking ? FontWeight.w500 : FontWeight.normal,
-                  ),
+                Row(
+                  children: [
+                    Text(
+                      user.isSpeaking ? 'Speaking...' : 'Listening',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: user.isSpeaking
+                            ? AppTheme.secondaryColor
+                            : theme.colorScheme.onSurface.withOpacity(0.7),
+                        fontWeight: user.isSpeaking
+                            ? FontWeight.w500
+                            : FontWeight.normal,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _getRoleColor(user.role).withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: _getRoleColor(user.role).withOpacity(0.3),
+                          width: 1,
+                        ),
+                      ),
+                      child: Text(
+                        _getRoleDisplayName(user.role),
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          color: _getRoleColor(user.role),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),

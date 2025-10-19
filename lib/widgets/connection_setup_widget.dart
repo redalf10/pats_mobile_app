@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../viewmodels/walkie_talkie_viewmodel.dart';
 import '../config/theme_config.dart';
+import '../models/user.dart';
+import 'role_selection_dialog.dart';
 
 class ConnectionSetupWidget extends StatefulWidget {
   final WalkieTalkieViewModel viewModel;
@@ -339,15 +341,31 @@ class _ConnectionSetupWidgetState extends State<ConnectionSetupWidget>
     HapticFeedback.mediumImpact();
 
     try {
-      final code = await widget.viewModel.startAsServer();
-      if (code != null) {
-        await _showServerStartedDialog(code);
+      // First show role selection dialog
+      final selectedRole = await _showServerRoleSelectionDialog();
+
+      if (selectedRole != null) {
+        print(
+            '🔍 Role selected, creating server with role: ${selectedRole.name}');
+        // Create server with the selected role
+        final code = await widget.viewModel.startAsServerWithRole(selectedRole);
+        print('🔍 Server creation result: ${code ?? 'null'}');
+        if (code != null) {
+          print('🔍 Showing server started dialog');
+          // Add a small delay to ensure the role selection dialog is fully closed
+          await Future.delayed(const Duration(milliseconds: 100));
+          await _showServerStartedDialog(code);
+        } else {
+          print('🔍 Server creation failed, showing error dialog');
+          _showErrorDialog(
+            'Failed to start server',
+            'Unable to start room server. Please try again.',
+          );
+        }
       } else {
-        _showErrorDialog(
-          'Failed to start server',
-          'Unable to start room server. Please try again.',
-        );
+        print('🔍 No role selected, staying on connection screen');
       }
+      // If user cancels role selection, do nothing (stay on connection screen)
     } catch (e) {
       _showErrorDialog('Error starting server', '$e');
     } finally {
@@ -355,8 +373,34 @@ class _ConnectionSetupWidgetState extends State<ConnectionSetupWidget>
     }
   }
 
+  Future<UserRole?> _showServerRoleSelectionDialog() async {
+    print('🔍 Showing server role selection dialog');
+
+    final selectedRole = await showDialog<UserRole>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        print('🔍 Building server role selection dialog');
+        return RoleSelectionDialog(
+          roomCode: 'TBD', // Will be generated after role selection
+          existingUsers: [], // No existing users when creating server
+          onRoleSelected: (role) {
+            print('🔍 Server creator selected role: ${role.name}');
+            Navigator.of(context).pop(role);
+          },
+        );
+      },
+    );
+
+    print(
+        '🔍 Server role dialog closed, selected role: ${selectedRole?.name ?? 'none'}');
+    return selectedRole;
+  }
+
   Future<void> _connectToServer() async {
     final code = _serverIPController.text.trim();
+    print('🔍 Attempting to connect with code: $code');
+
     if (code.isEmpty) {
       _showErrorDialog(
         'Missing Room Code',
@@ -371,16 +415,62 @@ class _ConnectionSetupWidgetState extends State<ConnectionSetupWidget>
       );
       return;
     }
+
+    print('🔍 Code validation passed, showing role selection dialog');
+    // Show role selection dialog before connecting
+    await _showRoleSelectionDialog(code.toUpperCase());
+  }
+
+  Future<void> _showRoleSelectionDialog(String roomCode) async {
+    print('🔍 Showing role selection dialog for room: $roomCode');
+
+    // Show role selection dialog immediately with empty user list
+    // We'll get the actual user list after connecting
+    final selectedRole = await showDialog<UserRole>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        print('🔍 Building role selection dialog');
+        return RoleSelectionDialog(
+          roomCode: roomCode,
+          existingUsers: [], // Start with empty list, will be updated after connection
+          onRoleSelected: (role) {
+            print('🔍 Role selected: ${role.name}');
+            Navigator.of(context).pop(role);
+          },
+        );
+      },
+    );
+
+    print('🔍 Dialog closed, selected role: ${selectedRole?.name ?? 'none'}');
+
+    if (selectedRole != null) {
+      print(
+          '🔍 Client role selected: ${selectedRole.name}, connecting to room: $roomCode');
+      await _connectWithRole(roomCode, selectedRole);
+    } else {
+      print('🔍 Client role selection cancelled');
+    }
+    // If user cancels, do nothing (stay on connection screen)
+  }
+
+  Future<void> _connectWithRole(String roomCode, UserRole role) async {
     setState(() => _isConnecting = true);
     HapticFeedback.mediumImpact();
 
     try {
+      // Disconnect first if already connected
+      if (widget.viewModel.connectionMode != ConnectionMode.disconnected) {
+        await widget.viewModel.disconnect();
+      }
+
+      // Connect with the selected role
       final success =
-          await widget.viewModel.connectToServer(code.toUpperCase());
+          await widget.viewModel.connectToServerWithRole(roomCode, role);
       if (!success) {
         _showErrorDialog(
           'Connection Failed',
-          'Room code not found or server not available.',
+          'Failed to join room with selected role.',
         );
       }
     } catch (e) {

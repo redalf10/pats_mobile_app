@@ -84,6 +84,23 @@ class WalkieTalkieViewModel extends ChangeNotifier {
   String? get serverIP => _serverIP;
   String? get roomCode => _roomCode;
 
+  UserRole? get currentUserRole {
+    final currentUser = _users.firstWhere(
+      (user) => user.id == _userId,
+      orElse: () => User(id: '', name: '', role: UserRole.inspector),
+    );
+    return currentUser.id.isNotEmpty ? currentUser.role : null;
+  }
+
+  void updateCurrentUserRole(UserRole role) {
+    // Update the current user's role in the users list
+    final userIndex = _users.indexWhere((user) => user.id == _userId);
+    if (userIndex != -1) {
+      _users[userIndex] = _users[userIndex].copyWith(role: role);
+      notifyListeners();
+    }
+  }
+
   Future<void> initialize() async {
     try {
       logger.i('Starting initialization...');
@@ -478,8 +495,12 @@ class WalkieTalkieViewModel extends ChangeNotifier {
   }
 
   Future<String?> startAsServer() async {
+    return await startAsServerWithRole(UserRole.inspector);
+  }
+
+  Future<String?> startAsServerWithRole(UserRole role) async {
     logger.i(
-        'Starting as server with Firebase mode: ${AppConfig.useFirebaseAsServer}');
+        'Starting as server with Firebase mode: ${AppConfig.useFirebaseAsServer} and role: ${role.name}');
     final serverIP = await _networkService.startServer();
     logger.i('Server started, IP: $serverIP');
     if (serverIP != null) {
@@ -509,8 +530,10 @@ class WalkieTalkieViewModel extends ChangeNotifier {
         }
       } catch (_) {}
 
-      final selfUser = User(id: _userId, name: _userName, photoUrl: photoUrl);
-      logger.i('🏠 Creating self user: ${selfUser.name} (${selfUser.id})');
+      final selfUser =
+          User(id: _userId, name: _userName, photoUrl: photoUrl, role: role);
+      logger.i(
+          '🏠 Creating self user: ${selfUser.name} (${selfUser.id}) with role: ${selfUser.role.name}');
 
       if (AppConfig.useFirebaseAsServer) {
         await _networkService.setupFirebaseRoom(code, _userId);
@@ -527,6 +550,8 @@ class WalkieTalkieViewModel extends ChangeNotifier {
       }
 
       _users = [selfUser];
+      logger.i(
+          '🏠 Server created successfully, connection mode: $_connectionMode, users: ${_users.length}');
       notifyListeners();
       return code;
     }
@@ -534,6 +559,10 @@ class WalkieTalkieViewModel extends ChangeNotifier {
   }
 
   Future<bool> connectToServer(String code) async {
+    return await connectToServerWithRole(code, UserRole.inspector);
+  }
+
+  Future<bool> connectToServerWithRole(String code, UserRole role) async {
     String? photoUrl;
     try {
       final dynamic currentUser =
@@ -543,7 +572,8 @@ class WalkieTalkieViewModel extends ChangeNotifier {
       }
     } catch (_) {}
 
-    logger.i('Attempting to connect to room code: $code');
+    logger
+        .i('Attempting to connect to room code: $code with role: ${role.name}');
 
     final String serverTarget = code;
 
@@ -552,6 +582,7 @@ class WalkieTalkieViewModel extends ChangeNotifier {
       _userId,
       _userName,
       photoUrl: photoUrl,
+      role: role,
     );
 
     logger.i('Connection result: $success');
@@ -565,6 +596,8 @@ class WalkieTalkieViewModel extends ChangeNotifier {
       } catch (e) {
         logger.e('Error setting room in database service: $e');
       }
+      logger.i(
+          '🏠 Client connected successfully, connection mode: $_connectionMode, users: ${_users.length}');
       notifyListeners();
     }
     return success;

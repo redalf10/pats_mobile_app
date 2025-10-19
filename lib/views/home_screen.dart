@@ -307,7 +307,8 @@ class _WalkieTalkieViewState extends State<WalkieTalkieView> {
                     isTalking: viewModel.isTalking,
                     onTalkStart: viewModel.startTalking,
                     onTalkEnd: viewModel.stopTalking,
-                    enabled: true, // Everyone can speak in walkie-talkie mode
+                    enabled: true, // Connection-based enabling
+                    userRole: viewModel.currentUserRole,
                   ),
                   const SizedBox(height: 40),
                 ],

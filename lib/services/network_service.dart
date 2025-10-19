@@ -99,12 +99,12 @@ class NetworkService {
 
   // Connect as client
   Future<bool> connectToServer(String serverIP, String userId, String userName,
-      {String? photoUrl}) async {
+      {String? photoUrl, UserRole role = UserRole.inspector}) async {
     try {
       if (AppConfig.useFirebaseAsServer) {
         // Join Firebase room by code (serverIP holds code's IP in current design; here treat as code)
         final success = await _connectFirebaseRoom(serverIP, userId, userName,
-            photoUrl: photoUrl);
+            photoUrl: photoUrl, role: role);
         if (success) {
           _isConnected = true;
           return true;
@@ -219,12 +219,13 @@ class NetworkService {
   }
 
   Future<bool> _connectFirebaseRoom(String code, String userId, String userName,
-      {String? photoUrl}) async {
+      {String? photoUrl, UserRole role = UserRole.inspector}) async {
     try {
       logger.i('Connecting to Firebase room: $code');
 
       // Create user object
-      final user = User(id: userId, name: userName, photoUrl: photoUrl);
+      final user =
+          User(id: userId, name: userName, photoUrl: photoUrl, role: role);
 
       final FirebaseRoomService roomService = FirebaseRoomService(
         roomCode: code,
