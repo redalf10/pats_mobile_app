@@ -9,7 +9,7 @@ class GeminiService {
 
   GeminiService()
       : _model = GenerativeModel(
-          model: 'gemini-1.5-flash', // Updated to newer model
+          model: 'gemini-2.0-flash', // Updated to correct model name
           apiKey: _apiKey,
         );
 
@@ -17,24 +17,37 @@ class GeminiService {
   /// Returns a map of word -> list of synonyms (up to 3 each where available).
   Future<Map<String, List<String>>> getSynonymsForWords(String text) async {
     try {
-      // Basic sanitization
+      // Minimal sanitization - preserve the original text as much as possible
       final sanitized = text
           .replaceAll(RegExp(r'[\r\n]+'), ' ')
-          .replaceAll(RegExp(r"[^A-Za-z0-9\s']"), '')
+          .replaceAll(RegExp(r'\s+'), ' ')
           .trim();
 
       if (sanitized.isEmpty) return {};
 
+      print('🚁 Analyzing text for aviation terms: $sanitized');
+
       final prompt = '''
-Extract aviation-related or important words from the text and provide up to 3 synonyms for each.
-Ignore common words like: the, a, an, and, or, of, to, in, is, are, was, were, that, it, this, for, on, with, at, by, from.
+You are an aviation expert. Analyze the following text and identify ALL aviation-related terms, flight operations, aircraft terminology, airport codes, flight numbers, and aviation procedures.
+
+Look for terms like:
+- Flight numbers (e.g., "Flight 4B7", "AA123")
+- Aircraft types and models
+- Airport names and codes (e.g., "Hong Kong", "San Francisco", "LAX", "JFK")
+- Aviation procedures (e.g., "take-off", "landing", "boarding", "departure")
+- Aviation terminology (e.g., "runway", "taxi", "gate", "terminal")
+- Airline names and codes
+- Aviation weather terms
+- Navigation and communication terms
+
+For each aviation term found, provide up to 3 related synonyms or alternative terms.
 
 Format each line exactly as:
-word: synonym1, synonym2, synonym3
+term: synonym1, synonym2, synonym3
 
-Text: $sanitized
+Text to analyze: "$sanitized"
 
-Respond ONLY with the word:synonym format, one per line. No explanations or extra text.
+Respond ONLY with the term:synonym format, one per line. No explanations or extra text.
 ''';
 
       final content = [Content.text(prompt)];
@@ -51,7 +64,7 @@ Respond ONLY with the word:synonym format, one per line. No explanations or extr
       }
 
       final responseText = response.text!;
-      print('Gemini response: $responseText'); // Debug log
+      print('🚁 Gemini response: $responseText'); // Debug log
 
       final Map<String, List<String>> synonymMap = {};
       final lines = responseText.split(RegExp(r'\n'));
@@ -81,13 +94,13 @@ Respond ONLY with the word:synonym format, one per line. No explanations or extr
         }
       }
 
-      print('Parsed synonyms: $synonymMap'); // Debug log
+      print('🚁 Parsed aviation terms: $synonymMap'); // Debug log
       return synonymMap;
     } on TimeoutException catch (e) {
-      print('Timeout getting synonyms: $e');
+      print('Timeout getting aviation terms: $e');
       return {};
     } catch (e) {
-      print('Error getting synonyms for words: $e');
+      print('Error getting aviation terms: $e');
       return {};
     }
   }
@@ -96,7 +109,7 @@ Respond ONLY with the word:synonym format, one per line. No explanations or extr
   /// Returns the transcribed text or null if failed.
   Future<String?> transcribeAudio(Uint8List audioData) async {
     try {
-      final prompt =
+      const prompt =
           'Transcribe this audio accurately. Provide only the transcribed text, no additional comments or formatting.';
 
       final content = [

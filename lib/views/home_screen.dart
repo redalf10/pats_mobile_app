@@ -9,8 +9,6 @@ import '../widgets/talk_button.dart';
 import '../widgets/theme_toggle_button.dart';
 import '../services/auth_service.dart';
 import '../config/theme_config.dart';
-import 'transcription_history_page.dart';
-import '../models/user.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -309,7 +307,7 @@ class _WalkieTalkieViewState extends State<WalkieTalkieView> {
                     isTalking: viewModel.isTalking,
                     onTalkStart: viewModel.startTalking,
                     onTalkEnd: viewModel.stopTalking,
-                    enabled: viewModel.myRole != Role.tower2,
+                    enabled: true, // Everyone can speak in walkie-talkie mode
                   ),
                   const SizedBox(height: 40),
                 ],

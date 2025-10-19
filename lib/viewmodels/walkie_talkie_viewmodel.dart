@@ -46,8 +46,6 @@ class WalkieTalkieViewModel extends ChangeNotifier {
   final Map<String, String> _lastTranscriptTextByUser = {};
   final Map<String, int> _lastTranscriptUpdatedAtByUser = {};
 
-  // Track role assignments locally
-  final Map<String, Role> _userRoles = {};
   String? _lastError;
   int _talkStartedAtMs = 0;
 
@@ -76,13 +74,6 @@ class WalkieTalkieViewModel extends ChangeNotifier {
 
   List<User> get users => _users;
   bool get isTalking => _isTalking;
-  Role get myRole {
-    final me = _users.firstWhere(
-      (u) => u.id == _userId,
-      orElse: () => User(id: _userId, name: _userName),
-    );
-    return me.role;
-  }
 
   String get userId => _userId;
   String get userName => _userName;
@@ -197,27 +188,132 @@ class WalkieTalkieViewModel extends ChangeNotifier {
 
     // Broadcast our partial transcripts in near real-time
     _audioService.transcriptionStream.listen((text) {
-      final trimmed = text.trim();
-      logger.i('Received transcription: "$trimmed"');
-      if (trimmed.isEmpty) return;
+      String trimmed = text.trim();
+      logger.i('🎤 Received transcription: "$trimmed"');
+      logger.i(
+          '🎤 Database service initialized: ${_localDbService.isInitialized}');
+      logger.i('🎤 Database service room set: ${_localDbService.isRoomSet}');
+      logger.i(
+          '🎤 Database service room path: ${_localDbService.currentRoomPath}');
+
+      if (trimmed.isEmpty) {
+        logger.d('🎤 Empty transcription, skipping');
+        return;
+      }
+
+      // FIXED: Filter out very short transcriptions that are likely incomplete
+      if (trimmed.length < 2) {
+        logger.d('🎤 Transcription too short, skipping: "$trimmed"');
+        return;
+      }
+
+      // FIXED: Limit maximum transcription length to prevent excessive text accumulation
+      if (trimmed.length > 1000) {
+        logger.w(
+            '🎤 Transcription too long (${trimmed.length} chars), truncating');
+        trimmed = trimmed.substring(0, 1000) + '...';
+      }
+
       final ts = DateTime.now().millisecondsSinceEpoch;
 
-      // Always insert a new transcription record
-      final rec = _localDbService.addTranscription(
-        userId: _userId,
-        userName: _userName,
-        text: trimmed,
-        timestamp: ts,
-      );
+      // Check for duplicate transcripts to prevent spam
+      final lastText = _lastTranscriptTextByUser[_userId];
+      final lastUpdated = _lastTranscriptUpdatedAtByUser[_userId] ?? 0;
+      final timeDiff = ts - lastUpdated;
 
-      // Broadcast to peers
-      _networkService.sendTranscript(
-        userId: _userId,
-        userName: _userName,
-        text: trimmed,
-        timestamp: ts,
-      );
-      logger.i('Broadcasted transcript: "$trimmed"');
+      // Skip if EXACTLY same text within 1 second (prevents rapid duplicate saves)
+      if (lastText == trimmed && timeDiff < 1000) {
+        logger.d(
+            '🎤 Exact duplicate transcription detected, skipping: "$trimmed"');
+        return;
+      }
+
+      // FIXED: Skip if text is identical to last processed text (prevents accumulation)
+      if (lastText == trimmed) {
+        logger.d(
+            '🎤 Identical transcription to last processed, skipping: "$trimmed"');
+        return;
+      }
+
+      try {
+        logger.i('🎤 Processing transcription: "$trimmed"');
+
+        // Check if we should update existing transcription or create new one
+        final activeKey = _activeTranscriptionKeyByUser[_userId];
+        final withinWindow = timeDiff < _mergeWindowMs;
+
+        if (activeKey != null && withinWindow && lastText != null) {
+          // FIXED: Improved logic for updating existing transcription
+          final grows = trimmed.length >= lastText.length;
+          final sharesPrefix =
+              grows && trimmed.toLowerCase().startsWith(lastText.toLowerCase());
+          final isImprovement = grows &&
+              (trimmed.length > lastText.length || trimmed != lastText);
+
+          // FIXED: More strict conditions to prevent single word updates
+          final significantImprovement = trimmed.length > lastText.length + 3 ||
+              (trimmed.length > lastText.length && trimmed.contains(lastText));
+
+          if (isImprovement &&
+              significantImprovement &&
+              (sharesPrefix || trimmed.contains(lastText))) {
+            logger.i(
+                '🎤 Updating existing transcription: "$lastText" -> "$trimmed"');
+            _localDbService.updateTranscriptionText(
+                transcriptionKey: activeKey, newText: trimmed);
+            _lastTranscriptTextByUser[_userId] = trimmed;
+            _lastTranscriptUpdatedAtByUser[_userId] = ts;
+            logger.i('✅ Updated transcription: "$trimmed"');
+
+            // FIXED: Don't broadcast transcript here - it's already stored in Firebase
+            // The updateTranscriptionText() already updates it in the transcripts table
+            logger.i(
+                'Updated transcript in Firebase, will be synced to other clients');
+            return;
+          }
+        }
+
+        // FIXED: Only create new transcription if it's significantly different
+        // This prevents single word transcriptions from creating new records
+        if (lastText != null &&
+            trimmed.length <= lastText.length + 2 &&
+            trimmed.toLowerCase().contains(lastText.toLowerCase())) {
+          logger
+              .d('🎤 Transcription too similar to last, skipping: "$trimmed"');
+          return;
+        }
+
+        // Create new transcription record for new/different content
+        final transcription = _localDbService.addTranscription(
+          userId: _userId,
+          userName: _userName,
+          text: trimmed,
+          timestamp: ts,
+        );
+        logger.i(
+            '✅ Saved new transcription to database: "$trimmed" (ID: ${transcription.id})');
+
+        // Store the key for potential updates
+        final key = _localDbService.getLastTranscriptionKey();
+        if (key != null) {
+          _activeTranscriptionKeyByUser[_userId] = key;
+          _lastTranscriptTextByUser[_userId] = trimmed;
+          _lastTranscriptUpdatedAtByUser[_userId] = ts;
+          logger.i('🔑 Stored transcription key: $key');
+        }
+
+        // FIXED: Don't broadcast transcript here - it's already stored in Firebase
+        // The FirebaseDbService.addTranscription() already stores it in the transcriptions table
+        // and other clients will receive it via the Firebase listener
+        logger.i(
+            '📡 Transcript stored in Firebase, will be synced to other clients');
+      } catch (e) {
+        logger.e('❌ Error saving/broadcasting transcription: $e');
+        logger.e('❌ Stack trace: ${StackTrace.current}');
+        // FIXED: Don't broadcast transcript here either - avoid duplicates
+        logger
+            .w('Database save failed, transcript not synced to other clients');
+      }
     });
 
     // Observe STT status for diagnostics only
@@ -265,22 +361,33 @@ class WalkieTalkieViewModel extends ChangeNotifier {
       }
 
       if (shouldInsertNew) {
-        final rec = _localDbService.addTranscription(
-          userId: userIdMsg,
-          userName: userNameMsg,
-          text: textMsg,
-          timestamp: ts,
-        );
-        // Store the Firebase key, not the ID
-        _activeTranscriptionKeyByUser[userIdMsg] = _getTranscriptionKey(rec);
-        _lastTranscriptTextByUser[userIdMsg] = textMsg;
-        _lastTranscriptUpdatedAtByUser[userIdMsg] = ts;
+        try {
+          final rec = _localDbService.addTranscription(
+            userId: userIdMsg,
+            userName: userNameMsg,
+            text: textMsg,
+            timestamp: ts,
+          );
+          // Store the Firebase key, not the ID
+          _activeTranscriptionKeyByUser[userIdMsg] = _getTranscriptionKey(rec);
+          _lastTranscriptTextByUser[userIdMsg] = textMsg;
+          _lastTranscriptUpdatedAtByUser[userIdMsg] = ts;
+          logger
+              .i('Saved received transcription from $userNameMsg: "$textMsg"');
+        } catch (e) {
+          logger.e('Error saving received transcription: $e');
+        }
       } else if (shouldUpdate && activeKey != null) {
-        // Use the key directly for updates
-        _localDbService.updateTranscriptionText(
-            transcriptionKey: activeKey, newText: textMsg);
-        _lastTranscriptTextByUser[userIdMsg] = textMsg;
-        _lastTranscriptUpdatedAtByUser[userIdMsg] = ts;
+        try {
+          // Use the key directly for updates
+          _localDbService.updateTranscriptionText(
+              transcriptionKey: activeKey, newText: textMsg);
+          _lastTranscriptTextByUser[userIdMsg] = textMsg;
+          _lastTranscriptUpdatedAtByUser[userIdMsg] = ts;
+          logger.i('Updated transcription from $userNameMsg: "$textMsg"');
+        } catch (e) {
+          logger.e('Error updating received transcription: $e');
+        }
       }
     } catch (e) {
       logger.e('Error handling transcript message: $e');
@@ -289,13 +396,19 @@ class WalkieTalkieViewModel extends ChangeNotifier {
 
   // Helper method to get transcription key
   String _getTranscriptionKey(Transcription transcription) {
-    // Since we don't have direct access to the key, we need to find it in cache
-    for (final entry in _localDbService.getAllNewestFirst().asMap().entries) {
-      if (entry.value.id == transcription.id) {
-        // This is a simplification - you might need a better way to track keys
-        return entry.key.toString();
-      }
+    // Try to get the key by ID first
+    final keyById = _localDbService.getTranscriptionKeyById(transcription.id);
+    if (keyById != null) {
+      return keyById;
     }
+
+    // Fallback to last transcription key if available
+    final lastKey = _localDbService.getLastTranscriptionKey();
+    if (lastKey != null) {
+      return lastKey;
+    }
+
+    // Final fallback
     return transcription.id.toString();
   }
 
@@ -340,9 +453,10 @@ class WalkieTalkieViewModel extends ChangeNotifier {
       }
       try {
         await _localDbService.setRoom(code);
-      } catch (_) {}
-
-      resetAllRoles();
+        logger.i('Database service connected to room: $code');
+      } catch (e) {
+        logger.e('Error setting room in database service: $e');
+      }
 
       String? photoUrl;
       try {
@@ -353,11 +467,14 @@ class WalkieTalkieViewModel extends ChangeNotifier {
         }
       } catch (_) {}
 
-      final selfUser = User(
-          id: _userId, name: _userName, photoUrl: photoUrl, role: Role.pilot);
+      final selfUser = User(id: _userId, name: _userName, photoUrl: photoUrl);
+      logger.i('🏠 Creating self user: ${selfUser.name} (${selfUser.id})');
 
       if (AppConfig.useFirebaseAsServer) {
         await _networkService.setupFirebaseRoom(code, _userId);
+
+        // Add self user to Firebase room
+        await _networkService.addSelfUserToFirebase(selfUser);
 
         _networkService.sendMessage({
           'type': 'join',
@@ -402,7 +519,10 @@ class WalkieTalkieViewModel extends ChangeNotifier {
       _roomCode = code;
       try {
         await _localDbService.setRoom(code);
-      } catch (_) {}
+        logger.i('Database service connected to room: $code');
+      } catch (e) {
+        logger.e('Error setting room in database service: $e');
+      }
       notifyListeners();
     }
     return success;
@@ -412,15 +532,44 @@ class WalkieTalkieViewModel extends ChangeNotifier {
     return await NetworkInfo().getWifiIP();
   }
 
-  /// Start audio recording and STT listening in coordinated parallel
+  /// Start audio recording and STT listening in coordinated manner
+  /// FIXED: Use STT-only mode to avoid microphone conflicts
   Future<void> _startAudioAndSTT() async {
     _audioRecordingStarted = false;
     _sttStarted = false;
     _audioRecordingCompleter = Completer<Uint8List?>();
 
     try {
-      // Start audio recording first (gives it priority on microphone)
-      if (enableAudioRecordingDuringTalk) {
+      // FIXED: Start STT first and only, since it can provide both transcription and audio data
+      // This avoids microphone conflicts between AudioRecorder and SpeechToText
+      logger.i('Starting STT listening (primary mode)...');
+
+      bool sttStarted = false;
+      try {
+        sttStarted = await _audioService
+            .startListeningContinuous()
+            .timeout(const Duration(seconds: 5));
+
+        if (sttStarted) {
+          logger.i('STT started successfully');
+          _sttStarted = true;
+        }
+      } catch (e) {
+        logger.e('STT start timeout or error: $e');
+        sttStarted = false;
+      }
+
+      if (!_sttStarted) {
+        logger.e('Failed to start STT');
+        _lastError = 'Failed to start speech recognition';
+        _audioRecordingCompleter?.completeError('STT failed to start');
+        throw Exception('STT failed to start');
+      }
+
+      // FIXED: Only start audio recording if STT is not available or fails
+      // This prevents microphone conflicts
+      if (enableAudioRecordingDuringTalk && !_sttStarted) {
+        logger.i('STT failed, falling back to audio recording only...');
         String? recordingPath;
         for (int attempt = 0; attempt < 3 && recordingPath == null; attempt++) {
           try {
@@ -448,47 +597,9 @@ class WalkieTalkieViewModel extends ChangeNotifier {
           _audioRecordingCompleter?.completeError('Recording failed to start');
           throw Exception('Recording failed to start');
         }
-
-        // Give recorder time to stabilize
-        await Future.delayed(const Duration(milliseconds: 500));
       }
 
-      // Start STT listening in continuous mode
-      bool sttStarted = false;
-      try {
-        logger.i('Starting STT listening...');
-        sttStarted = await _audioService
-            .startListeningContinuous()
-            .timeout(const Duration(seconds: 5));
-
-        if (sttStarted) {
-          logger.i('STT started successfully');
-          _sttStarted = true;
-        }
-      } catch (e) {
-        logger.e('STT start timeout or error: $e');
-        sttStarted = false;
-      }
-
-      if (!_sttStarted) {
-        logger.e('Failed to start STT');
-        _lastError = 'Failed to start speech recognition';
-
-        // Stop recorder if it was started but STT failed
-        if (_audioRecordingStarted) {
-          try {
-            await _audioService.stopRecording();
-            _audioRecordingStarted = false;
-          } catch (e) {
-            logger.e('Error stopping recorder after STT failure: $e');
-          }
-        }
-
-        _audioRecordingCompleter?.completeError('STT failed to start');
-        throw Exception('STT failed to start');
-      }
-
-      logger.i('Audio recording and STT started in parallel');
+      logger.i('Audio/STT services started successfully');
     } catch (e) {
       logger.e('Error starting audio and STT: $e');
       _audioRecordingCompleter?.completeError(e);
@@ -543,17 +654,9 @@ class WalkieTalkieViewModel extends ChangeNotifier {
     // Clear any previous error state
     _lastError = null;
 
-    // Prevent inspectors from starting to talk
-    if (myRole == Role.inspector) {
-      logger.w('Inspectors are not allowed to speak');
-      _lastError = 'Inspectors are not allowed to speak';
-      notifyListeners();
-      return;
-    }
-
     if (_isTalking || !_networkService.isConnected) {
       logger.w(
-          'Cannot start talking: already talking=${_isTalking}, connected=${_networkService.isConnected}');
+          'Cannot start talking: already talking=$_isTalking, connected=${_networkService.isConnected}');
       _lastError = !_networkService.isConnected
           ? 'Not connected to a room'
           : 'Already in talking mode';
@@ -574,10 +677,29 @@ class WalkieTalkieViewModel extends ChangeNotifier {
       _isTalking = true;
       notifyListeners();
 
-      // Make sure any previous audio session is cleaned up
-      await _audioService.stopListening();
-      if (_audioService.isRecording) {
-        await _audioService.stopRecording();
+      // FIXED: Clear previous transcription state to prevent carry-over
+      _activeTranscriptionKeyByUser.remove(_userId);
+      _lastTranscriptTextByUser.remove(_userId);
+      _lastTranscriptUpdatedAtByUser.remove(_userId);
+
+      // FIXED: Make sure any previous audio session is cleaned up properly
+      try {
+        await _audioService.stopListening();
+        if (_audioService.isRecording) {
+          await _audioService.stopRecording();
+        }
+        // FIXED: Reset STT state to prevent carry-over from previous sessions
+        await _audioService.resetSTT();
+
+        // FIXED: Clear all transcription state to prevent text accumulation
+        _activeTranscriptionKeyByUser.clear();
+        _lastTranscriptTextByUser.clear();
+        _lastTranscriptUpdatedAtByUser.clear();
+
+        logger.i(
+            'Previous audio session cleaned up and transcription state reset');
+      } catch (e) {
+        logger.w('Error cleaning up previous audio session: $e');
       }
 
       // Start audio recording and STT in coordinated parallel
@@ -595,39 +717,6 @@ class WalkieTalkieViewModel extends ChangeNotifier {
       _lastError = 'Failed to start talking mode: $e';
       await _cleanupTalkingState();
     }
-  }
-
-  /// Role selection disabled - always returns false
-  Future<bool> claimRole(Role desired) async {
-    return false;
-  }
-
-  /// Role release disabled - always returns false
-  Future<bool> releaseRole() async {
-    return false;
-  }
-
-  void _updateMyRoleLocally(Role role) {
-    // Role updates disabled
-  }
-
-  /// Get the role for a specific user - always returns pilot
-  Role getUserRole(String userId) {
-    return Role.pilot;
-  }
-
-  /// Role availability check disabled - always returns false
-  bool isRoleAvailable(Role role) {
-    return false;
-  }
-
-  /// Reset all roles to inspector
-  void resetAllRoles() {
-    _userRoles.clear();
-    for (final user in _users) {
-      _userRoles[user.id] = Role.inspector;
-    }
-    notifyListeners();
   }
 
   Future<void> stopTalking() async {
@@ -648,7 +737,9 @@ class WalkieTalkieViewModel extends ChangeNotifier {
       // Stop audio recording and STT in coordinated manner
       final audioData = await _stopAudioAndSTT();
 
-      // Send audio data if available
+      // FIXED: Send audio data if available (even if STT was primary mode)
+      // Note: In STT-only mode, we don't have raw audio data to send, which is fine
+      // because transcripts are the primary data and audio is supplementary
       if (audioData != null && audioData.isNotEmpty) {
         try {
           logger.i(
@@ -661,7 +752,8 @@ class WalkieTalkieViewModel extends ChangeNotifier {
           notifyListeners();
         }
       } else {
-        logger.w('No audio data to send');
+        logger.w(
+            'No audio data to send (STT-only mode - transcripts are primary data)');
       }
 
       // Get final transcription
@@ -671,6 +763,7 @@ class WalkieTalkieViewModel extends ChangeNotifier {
         if (transcript.isEmpty) {
           transcript = _audioService.lastNonEmptyTranscription.trim();
         }
+        logger.i('🎤 Final transcription retrieved: "$transcript"');
       } catch (e) {
         logger.e('Error retrieving final transcription: $e');
         _lastError = 'Error processing final transcription';
@@ -678,13 +771,21 @@ class WalkieTalkieViewModel extends ChangeNotifier {
       }
 
       // Use Gemini for more accurate final transcription if audio data is available
-      if (audioData != null && audioData.isNotEmpty) {
+      // Only use Gemini if the current transcript is empty or very short
+      if (audioData != null && audioData.isNotEmpty && transcript.length < 10) {
         try {
           final geminiTranscript =
               await _geminiService.transcribeAudio(audioData);
           if (geminiTranscript != null && geminiTranscript.isNotEmpty) {
-            transcript = geminiTranscript.trim();
-            logger.i('Used Gemini transcription: "$transcript"');
+            final geminiTrimmed = geminiTranscript.trim();
+            // Only use Gemini result if it's significantly different and longer
+            if (geminiTrimmed.length > transcript.length * 1.5) {
+              transcript = geminiTrimmed;
+              logger.i('Used Gemini transcription: "$transcript"');
+            } else {
+              logger.i(
+                  'Gemini transcription not significantly better, keeping STT result');
+            }
           }
         } catch (e) {
           logger.e('Error transcribing with Gemini: $e');
@@ -692,19 +793,33 @@ class WalkieTalkieViewModel extends ChangeNotifier {
         }
       }
 
-      // Save and broadcast final transcription if available
+      // FIXED: Save and broadcast final transcription if available
       if (transcript.isNotEmpty) {
         try {
           final ts = DateTime.now().millisecondsSinceEpoch;
           final activeKey = _activeTranscriptionKeyByUser[_userId];
 
           if (activeKey != null) {
-            await _localDbService.updateTranscriptionText(
-                transcriptionKey: activeKey, newText: transcript);
-            _lastTranscriptTextByUser[_userId] = transcript;
-            _lastTranscriptUpdatedAtByUser[_userId] = ts;
+            // FIXED: Always update final transcription to ensure completeness
+            final currentText = _lastTranscriptTextByUser[_userId] ?? '';
+            if (transcript != currentText) {
+              _localDbService.updateTranscriptionText(
+                  transcriptionKey: activeKey, newText: transcript);
+              _lastTranscriptTextByUser[_userId] = transcript;
+              _lastTranscriptUpdatedAtByUser[_userId] = ts;
+              logger.i('Updated final transcription: "$transcript"');
+
+              // FIXED: Don't broadcast transcript here - it's already stored in Firebase
+              // The updateTranscriptionText() already updates it in the transcriptions table
+              logger.i(
+                  'Final transcript updated in Firebase, will be synced to other clients');
+            } else {
+              logger.i(
+                  'Final transcription same as current, skipping update: "$transcript"');
+            }
           } else {
-            final rec = await _localDbService.addTranscription(
+            // FIXED: Always create final transcription if no active key exists
+            final rec = _localDbService.addTranscription(
               userId: _userId,
               userName: _userName,
               text: transcript,
@@ -713,24 +828,37 @@ class WalkieTalkieViewModel extends ChangeNotifier {
             _activeTranscriptionKeyByUser[_userId] = _getTranscriptionKey(rec);
             _lastTranscriptTextByUser[_userId] = transcript;
             _lastTranscriptUpdatedAtByUser[_userId] = ts;
-          }
+            logger.i('Saved final transcription: "$transcript"');
 
-          // Broadcast transcript to other users
-          _networkService.sendTranscript(
-            userId: _userId,
-            userName: _userName,
-            text: transcript,
-            timestamp: ts,
-          );
+            // FIXED: Don't broadcast transcript here - it's already stored in Firebase
+            // The addTranscription() already stores it in the transcriptions table
+            logger.i(
+                'Final transcript saved in Firebase, will be synced to other clients');
+          }
         } catch (e) {
           logger.e('Error saving/sending transcript: $e');
+          // FIXED: Don't broadcast transcript here either - avoid duplicates
+          logger.w(
+              'Database save failed, final transcript not synced to other clients');
         }
+      } else {
+        logger.w('No final transcription available');
       }
 
-      // Clear state for next session
-      _activeTranscriptionKeyByUser.remove(_userId);
-      _lastTranscriptTextByUser.remove(_userId);
-      _lastTranscriptUpdatedAtByUser.remove(_userId);
+      // Delay clearing state to allow UI to update properly
+      Future.delayed(const Duration(milliseconds: 500), () {
+        _activeTranscriptionKeyByUser.remove(_userId);
+        _lastTranscriptTextByUser.remove(_userId);
+        _lastTranscriptUpdatedAtByUser.remove(_userId);
+      });
+
+      // Clean up any duplicate transcriptions that might have been created
+      _localDbService.removeDuplicateTranscriptions();
+
+      // Also run cleanup after a short delay to catch any late duplicates
+      Future.delayed(const Duration(seconds: 2), () {
+        _localDbService.removeDuplicateTranscriptions();
+      });
     } catch (e) {
       logger.e('Error stopping talking: $e');
       _lastError = 'Error stopping talk mode: $e';
@@ -775,10 +903,18 @@ class WalkieTalkieViewModel extends ChangeNotifier {
       _talkStartedAtMs = 0;
       _lastError = null;
 
-      // Clear any active transcriptions
-      _activeTranscriptionKeyByUser.remove(_userId);
-      _lastTranscriptTextByUser.remove(_userId);
-      _lastTranscriptUpdatedAtByUser.remove(_userId);
+      // FIXED: Clear ALL transcription state to prevent text accumulation
+      _activeTranscriptionKeyByUser.clear();
+      _lastTranscriptTextByUser.clear();
+      _lastTranscriptUpdatedAtByUser.clear();
+
+      // FIXED: Reset STT state to prevent carry-over
+      try {
+        await _audioService.resetSTT();
+        logger.i('STT state reset during cleanup');
+      } catch (e) {
+        logger.w('Error resetting STT during cleanup: $e');
+      }
     } catch (e) {
       logger.e('Error during cleanup: $e');
     } finally {

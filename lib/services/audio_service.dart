@@ -227,7 +227,7 @@ class AudioService {
             _lastNonEmptyTranscription = _lastTranscription;
           }
           logger.i(
-              'STT result: "${_lastTranscription}" (final: ${result.finalResult})');
+              'STT result: "$_lastTranscription" (final: ${result.finalResult})');
           try {
             if (_lastTranscription.isNotEmpty) {
               _transcriptionController.add(_lastTranscription);
@@ -296,7 +296,7 @@ class AudioService {
             _lastNonEmptyTranscription = _lastTranscription;
           }
           logger.i(
-              'STT continuous result: "${_lastTranscription}" (final: ${result.finalResult})');
+              'STT continuous result: "$_lastTranscription" (final: ${result.finalResult})');
           try {
             if (_lastTranscription.isNotEmpty) {
               _transcriptionController.add(_lastTranscription);

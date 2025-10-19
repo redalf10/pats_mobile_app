@@ -7,7 +7,6 @@ import 'package:network_info_plus/network_info_plus.dart';
 
 import '../models/user.dart';
 import '../config.dart';
-import 'package:firebase_database/firebase_database.dart';
 import 'firebase_room_service.dart';
 
 class NetworkService {
@@ -18,7 +17,6 @@ class NetworkService {
   bool _isConnected = false;
   WebSocket? _clientSocket;
   Timer? _heartbeatTimer;
-  DatabaseReference? _firebaseRoomRef;
   FirebaseRoomService? _roomService;
 
   Logger logger = Logger();
@@ -119,7 +117,7 @@ class NetworkService {
               AppConfig.centralServerHost!.isNotEmpty)
           ? AppConfig.centralServerHost!
           : serverIP;
-      final bool secure = AppConfig.useSecureWebSocket;
+      const bool secure = AppConfig.useSecureWebSocket;
       final uri =
           Uri.parse('${secure ? 'wss' : 'ws'}://$host:${AppConfig.serverPort}');
       _clientSocket = await WebSocket.connect(uri.toString());
@@ -134,12 +132,7 @@ class NetworkService {
       // Send join message
       sendMessage({
         'type': 'join',
-        'user': User(
-                id: userId,
-                name: userName,
-                photoUrl: photoUrl,
-                role: Role.pilot) // All users join as pilots
-            .toJson(),
+        'user': User(id: userId, name: userName, photoUrl: photoUrl).toJson(),
       });
 
       _startHeartbeat();
@@ -167,9 +160,6 @@ class NetworkService {
         break;
       case 'speaking_status':
         _handleSpeakingStatus(message);
-        break;
-      case 'role_update':
-        _handleRoleUpdate(message);
         break;
       case 'transcript':
         _handleTranscript(message, sender);
@@ -328,57 +318,10 @@ class NetworkService {
 
     if (_connectedUsers.containsKey(userId)) {
       final current = _connectedUsers[userId]!;
-      // Ignore attempts to mark inspectors as speaking but preserve their actual role
-      if (isSpeaking == true && current.role == Role.inspector) {
-        logger.w('Ignoring speaking status for inspector user $userId');
-      } else {
-        // Update only the speaking status, preserve the existing role
-        _connectedUsers[userId] = current.copyWith(
-          isSpeaking: isSpeaking,
-          role: current.role, // Explicitly preserve the current role
-        );
-        _userUpdateController.add(connectedUsers);
-      }
-    }
-
-    if (_isServer) {
-      _broadcastMessage(message);
-    }
-  }
-
-  void _handleRoleUpdate(Map<String, dynamic> message) {
-    // Handle role reset message
-    if (message['reset'] == true) {
-      // Reset all users to inspector role
-      for (final userId in _connectedUsers.keys) {
-        _connectedUsers[userId] = _connectedUsers[userId]!.copyWith(
-          role: Role.inspector,
-        );
-      }
-      _userUpdateController.add(connectedUsers);
-      return;
-    }
-
-    final userId = message['userId'] as String?;
-    final roleStr = message['role'] as String?;
-    if (userId == null || roleStr == null) return;
-
-    if (_connectedUsers.containsKey(userId)) {
-      final updated = _connectedUsers[userId]!.copyWith(
-        role: (() {
-          switch (roleStr) {
-            case 'tower1':
-              return Role.tower1;
-            case 'tower2':
-              return Role.tower2;
-            case 'pilot':
-              return Role.pilot;
-            default:
-              return Role.inspector;
-          }
-        })(),
+      // Update speaking status
+      _connectedUsers[userId] = current.copyWith(
+        isSpeaking: isSpeaking,
       );
-      _connectedUsers[userId] = updated;
       _userUpdateController.add(connectedUsers);
     }
 
@@ -470,12 +413,13 @@ class NetworkService {
         }
       }
     } else if (_isServer && AppConfig.useFirebaseAsServer) {
-      // Write to Firebase room for clients to receive
+      // FIXED: Use FirebaseRoomService to properly route messages to correct tables
       try {
-        _firebaseRoomRef?.child('messages').push().set({
-          ...message,
-          'ts': ServerValue.timestamp,
-        });
+        if (_roomService != null) {
+          _roomService!.sendMessage(message);
+        } else {
+          logger.e('FirebaseRoomService not available for broadcasting');
+        }
       } catch (e) {
         logger.e('Failed to send message to Firebase: $e');
       }
@@ -508,46 +452,6 @@ class NetworkService {
         logger.e('Failed to send message to server: $e');
         _handleServerDisconnected();
       }
-    }
-  }
-
-  /// Request a role change for a user. If using Firebase room service, delegate there.
-  /// Update or attempt to claim a role for a user. Returns true on success.
-  Future<bool> updateUserRole(String userId, String role) async {
-    if (AppConfig.useFirebaseAsServer && _roomService != null) {
-      try {
-        // Attempt atomic claim via FirebaseRoomService.claimRole
-        final claimed = await _roomService!.claimRole(userId, role);
-        return claimed;
-      } catch (e) {
-        logger.e('Failed to update role via FirebaseRoomService: $e');
-        return false;
-      }
-    } else {
-      try {
-        sendMessage({
-          'type': 'role_update',
-          'userId': userId,
-          'role': role,
-        });
-        return true;
-      } catch (e) {
-        logger.e('Failed to send role_update message: $e');
-        return false;
-      }
-    }
-  }
-
-  /// Reset all users to inspector role when a new server is created
-  Future<void> resetAllRoles() async {
-    if (AppConfig.useFirebaseAsServer && _roomService != null) {
-      await _roomService!.resetAllRoles();
-    } else {
-      // For non-Firebase mode, send a reset message to all clients
-      sendMessage({
-        'type': 'role_update',
-        'reset': true,
-      });
     }
   }
 
@@ -601,10 +505,6 @@ class NetworkService {
     _isConnected = false;
 
     if (AppConfig.useFirebaseAsServer && _roomService != null) {
-      // If this is the server, reset all roles before disconnecting
-      if (_isServer) {
-        await _roomService?.resetAllRoles();
-      }
       await _roomService?.removeUser();
       _roomService?.dispose();
       _roomService = null;

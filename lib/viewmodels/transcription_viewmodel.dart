@@ -25,6 +25,17 @@ class TranscriptionViewModel extends ChangeNotifier {
     // CRITICAL: Check if already analyzed or loading to prevent duplicates
     if (_analyzedIds.contains(transcriptionId) ||
         _loadingIds.contains(transcriptionId)) {
+      print(
+          '🚁 Analysis already in progress or completed for $transcriptionId');
+      return;
+    }
+
+    // Validate input text
+    if (text.trim().isEmpty) {
+      print('🚁 Empty text provided for analysis: $transcriptionId');
+      _analyzedIds.add(transcriptionId);
+      _synonymsCache[transcriptionId] = {};
+      notifyListeners();
       return;
     }
 
@@ -35,18 +46,21 @@ class TranscriptionViewModel extends ChangeNotifier {
       _loadingIds.add(transcriptionId);
       notifyListeners();
 
-      print('Starting analysis for transcription $transcriptionId: $text');
+      print(
+          '🚁 Starting aviation terms analysis for transcription $transcriptionId');
+      print('🚁 Text to analyze: "$text"');
 
-      // Use the broader word-level synonyms endpoint
+      // Use the improved aviation terms analysis
       final synonyms = await _geminiService.getSynonymsForWords(text);
 
-      print('Received synonyms for $transcriptionId: $synonyms');
+      print('🚁 Received aviation terms for $transcriptionId: $synonyms');
+      print('🚁 Number of terms found: ${synonyms.length}');
 
       _synonymsCache[transcriptionId] = synonyms;
       _loadingIds.remove(transcriptionId);
       notifyListeners();
     } catch (e) {
-      print('Error in TranscriptionViewModel for $transcriptionId: $e');
+      print('🚁 Error in TranscriptionViewModel for $transcriptionId: $e');
       _loadingIds.remove(transcriptionId);
       _synonymsCache[transcriptionId] = {};
       notifyListeners();

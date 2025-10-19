@@ -82,8 +82,6 @@ class UserListWidget extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 6),
-                _roleBadge(user, theme),
-                const SizedBox(height: 6),
                 Text(
                   user.isSpeaking ? 'Speaking...' : 'Listening',
                   style: TextStyle(
@@ -133,50 +131,6 @@ class UserListWidget extends StatelessWidget {
               ),
             ),
         ],
-      ),
-    );
-  }
-
-  Widget _roleBadge(User user, ThemeData theme) {
-    final role = user.role;
-    String label;
-    Color bg;
-    Color textColor = Colors.white;
-
-    switch (role) {
-      case Role.tower1:
-        label = 'Tower 1';
-        bg = AppTheme.secondaryColor;
-        break;
-      case Role.tower2:
-        label = 'Tower 2';
-        bg = AppTheme.secondaryDarkColor;
-        break;
-      case Role.pilot:
-        label = 'Pilot';
-        bg = Colors.blueAccent;
-        break;
-      case Role.inspector:
-      default:
-        label = 'Inspector';
-        bg = theme.dividerColor.withOpacity(0.2);
-        textColor = theme.colorScheme.onSurface.withOpacity(0.8);
-        break;
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
-          color: textColor,
-        ),
       ),
     );
   }
@@ -288,7 +242,7 @@ class UserListWidget extends StatelessWidget {
             ),
           ),
 
-          // Synonyms section with proper analysis trigger
+          // Aviation Terms Analysis Section
           Consumer<TranscriptionViewModel>(
             builder: (context, viewModel, child) {
               final transcriptionId = transcription.timestamp;
@@ -299,15 +253,9 @@ class UserListWidget extends StatelessWidget {
               final hasBeenAnalyzed =
                   viewModel.hasBeenAnalyzed(transcriptionId);
 
-              // Only trigger analysis once using hasBeenAnalyzed check
-              if (!hasBeenAnalyzed && !isLoading) {
-                // Use Future.microtask to avoid calling during build
-                Future.microtask(() {
-                  viewModel.analyzeSynonyms(
-                      transcriptionId, transcription.text);
-                });
-              }
+              // Manual trigger - no automatic analysis
 
+              // Show loading indicator while analyzing
               if (isLoading) {
                 return Padding(
                   padding: const EdgeInsets.only(top: 12.0),
@@ -335,94 +283,185 @@ class UserListWidget extends StatelessWidget {
                 );
               }
 
-              if (synonyms.isEmpty) {
+              // Show message if no aviation terms found
+              if (synonyms.isEmpty && hasBeenAnalyzed) {
                 return Container(
-                  padding: const EdgeInsets.all(5),
+                  margin: const EdgeInsets.only(top: 12),
+                  padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
                     color: theme.dividerColor.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: theme.dividerColor.withOpacity(0.2),
+                      width: 1,
+                    ),
                   ),
-                  child: const Text('No Suggestions'),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.info_outline,
+                        size: 12,
+                        color: theme.colorScheme.onSurface.withOpacity(0.5),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        'No aviation terms detected',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: theme.colorScheme.onSurface.withOpacity(0.6),
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                    ],
+                  ),
                 );
               }
 
-              return Container(
-                margin: const EdgeInsets.only(top: 12),
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: AppTheme.secondaryColor.withOpacity(0.05),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: AppTheme.secondaryColor.withOpacity(0.15),
-                    width: 1,
-                  ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.lightbulb_outline,
-                          size: 14,
-                          color: AppTheme.secondaryColor.withOpacity(0.7),
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          'Aviation Terms',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: AppTheme.secondaryColor.withOpacity(0.9),
-                            letterSpacing: 0.3,
-                          ),
-                        ),
-                      ],
+              // Show aviation terms if found
+              if (synonyms.isNotEmpty) {
+                return Container(
+                  margin: const EdgeInsets.only(top: 12),
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: AppTheme.secondaryColor.withOpacity(0.05),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: AppTheme.secondaryColor.withOpacity(0.15),
+                      width: 1,
                     ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: synonyms.entries.map((entry) {
-                        return Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 6,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.flight,
+                            size: 14,
+                            color: AppTheme.secondaryColor.withOpacity(0.7),
                           ),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(
-                              color: AppTheme.secondaryColor.withOpacity(0.2),
-                              width: 1,
+                          const SizedBox(width: 6),
+                          Text(
+                            'Aviation Terms',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: AppTheme.secondaryColor.withOpacity(0.9),
+                              letterSpacing: 0.3,
                             ),
                           ),
-                          child: RichText(
-                            text: TextSpan(
-                              children: [
-                                TextSpan(
-                                  text: '${entry.key}: ',
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                    color: AppTheme.secondaryColor,
-                                  ),
-                                ),
-                                TextSpan(
-                                  text: entry.value.join(', '),
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: theme.colorScheme.onSurface
-                                        .withOpacity(0.8),
-                                  ),
+                          const Spacer(),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppTheme.secondaryColor.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              '${synonyms.length}',
+                              style: TextStyle(
+                                fontSize: 9,
+                                fontWeight: FontWeight.w600,
+                                color: AppTheme.secondaryColor,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: synonyms.entries.map((entry) {
+                          return Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(
+                                color: AppTheme.secondaryColor.withOpacity(0.2),
+                                width: 1,
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color:
+                                      AppTheme.secondaryColor.withOpacity(0.1),
+                                  blurRadius: 2,
+                                  offset: const Offset(0, 1),
                                 ),
                               ],
                             ),
-                          ),
-                        );
-                      }).toList(),
+                            child: RichText(
+                              text: TextSpan(
+                                children: [
+                                  TextSpan(
+                                    text: '${entry.key}: ',
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppTheme.secondaryColor,
+                                    ),
+                                  ),
+                                  TextSpan(
+                                    text: entry.value.join(', '),
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: theme.colorScheme.onSurface
+                                          .withOpacity(0.8),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ],
+                  ),
+                );
+              }
+
+              // Show "See Aviation Terms" button if not analyzed yet
+              return Container(
+                margin: const EdgeInsets.only(top: 12),
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    print(
+                        '🚁 Manual trigger: Analyzing aviation terms for: ${transcription.text}');
+                    viewModel.analyzeSynonyms(
+                        transcriptionId, transcription.text);
+                  },
+                  icon: Icon(
+                    Icons.flight,
+                    size: 16,
+                    color: Colors.white,
+                  ),
+                  label: Text(
+                    'See Aviation Terms',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
                     ),
-                  ],
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.secondaryColor,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    elevation: 2,
+                  ),
                 ),
               );
             },
@@ -434,9 +473,12 @@ class UserListWidget extends StatelessWidget {
 
   Widget _buildTranscriptSection(BuildContext context) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final transcriptions =
-          context.read<FirebaseDbService>().getAllNewestFirst();
-      print('🔄 Current transcriptions in DB: ${transcriptions.length}');
+      final dbService = context.read<FirebaseDbService>();
+      final transcriptions = dbService.getAllNewestFirst();
+      print('🔄 UI: Current transcriptions in DB: ${transcriptions.length}');
+      print('🔄 UI: Database initialized: ${dbService.isInitialized}');
+      print('🔄 UI: Room set: ${dbService.isRoomSet}');
+      print('🔄 UI: Room path: ${dbService.currentRoomPath}');
       for (var t in transcriptions) {
         print('   - ${t.userName}: "${t.text}" (id: ${t.id})');
       }
@@ -476,6 +518,15 @@ class UserListWidget extends StatelessWidget {
                 ),
               ),
               const Spacer(),
+              IconButton(
+                onPressed: () => _removeDuplicates(context),
+                icon: Icon(
+                  Icons.merge_type,
+                  size: 20,
+                  color: theme.colorScheme.onSurface.withOpacity(0.5),
+                ),
+                tooltip: 'Remove duplicate transcriptions',
+              ),
               IconButton(
                 onPressed: () => _clearTranscriptions(context),
                 icon: Icon(
@@ -543,8 +594,16 @@ class UserListWidget extends StatelessWidget {
                     final transcriptions = snapshot.data ?? [];
 
                     // Debug logging
-                    debugPrint(
-                        'Transcriptions count: ${transcriptions.length}');
+                    print(
+                        '🔄 UI StreamBuilder: Transcriptions count: ${transcriptions.length}');
+                    print(
+                        '🔄 UI StreamBuilder: Connection state: ${snapshot.connectionState}');
+                    print('🔄 UI StreamBuilder: Has data: ${snapshot.hasData}');
+                    print(
+                        '🔄 UI StreamBuilder: Has error: ${snapshot.hasError}');
+                    if (snapshot.hasError) {
+                      print('🔄 UI StreamBuilder: Error: ${snapshot.error}');
+                    }
 
                     if (transcriptions.isEmpty) {
                       return Center(
@@ -680,7 +739,7 @@ class UserListWidget extends StatelessWidget {
                   ),
                 ] else ...[
                   const SizedBox(height: 16),
-                  ...users.map((user) => _buildUserCard(user, theme)).toList(),
+                  ...users.map((user) => _buildUserCard(user, theme)),
                 ],
               ],
             ),
@@ -696,5 +755,10 @@ class UserListWidget extends StatelessWidget {
   void _clearTranscriptions(BuildContext context) {
     final dbService = context.read<FirebaseDbService>();
     dbService.clearAllTranscriptions();
+  }
+
+  void _removeDuplicates(BuildContext context) {
+    final dbService = context.read<FirebaseDbService>();
+    dbService.removeDuplicateTranscriptions();
   }
 }

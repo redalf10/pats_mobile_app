@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../config/theme_config.dart';
@@ -60,26 +61,48 @@ class _TalkButtonState extends State<TalkButton> with TickerProviderStateMixin {
   }
 
   bool _isTouchActive = false;
+  Timer? _holdTimer;
+  static const Duration _minHoldDuration = Duration(milliseconds: 100);
 
   void _handleTapDown(TapDownDetails details) {
-    if (_isTouchActive || !widget.enabled) return;
+    if (_isTouchActive || !widget.enabled) {
+      print(
+          '🎤 Talk button tap ignored: active=$_isTouchActive, enabled=${widget.enabled}');
+      return;
+    }
+
     _isTouchActive = true;
     _scaleController.forward();
     HapticFeedback.mediumImpact();
-    widget.onTalkStart();
+
+    // Add minimum hold duration to prevent accidental triggers
+    _holdTimer = Timer(_minHoldDuration, () {
+      if (_isTouchActive) {
+        print('🎤 Talk button held long enough - starting talk');
+        widget.onTalkStart();
+      }
+    });
   }
 
   void _handleTapUp(TapUpDetails details) {
     if (!_isTouchActive) return;
+
+    _holdTimer?.cancel();
     _isTouchActive = false;
     _scaleController.reverse();
+
+    print('🎤 Talk button released - stopping talk');
     widget.onTalkEnd();
   }
 
   void _handleTapCancel() {
     if (!_isTouchActive) return;
+
+    _holdTimer?.cancel();
     _isTouchActive = false;
     _scaleController.reverse();
+
+    print('🎤 Talk button cancelled - stopping talk');
     widget.onTalkEnd();
   }
 
@@ -160,6 +183,7 @@ class _TalkButtonState extends State<TalkButton> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    _holdTimer?.cancel();
     _pulseController.dispose();
     _scaleController.dispose();
     super.dispose();
