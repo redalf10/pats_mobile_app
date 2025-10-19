@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:logger/logger.dart';
 import 'package:pats_app/config.dart';
@@ -12,6 +11,7 @@ import '../services/network_service.dart';
 import '../services/room_code_service.dart';
 import '../services/firebase_service.dart'
     if (dart.library.html) '../services/local_db_service_web.dart';
+import 'dart:convert';
 import '../services/gemini_service.dart';
 
 typedef UserGetter = dynamic Function();
@@ -30,11 +30,13 @@ class WalkieTalkieViewModel extends ChangeNotifier {
   List<User> _users = [];
   bool _isTalking = false;
   bool _isInitialized = false;
+  bool _autoPlayAudio = true; // User preference for automatic audio playback
   ConnectionMode _connectionMode = ConnectionMode.disconnected;
   String? _serverIP;
   String? _roomCode;
   StreamSubscription? _messageSubscription;
   StreamSubscription? _userUpdateSubscription;
+  StreamSubscription<Transcription>? _audioPlaybackSubscription;
   Logger logger = Logger();
 
   // Audio and STT coordination
@@ -73,6 +75,7 @@ class WalkieTalkieViewModel extends ChangeNotifier {
 
   List<User> get users => _users;
   bool get isTalking => _isTalking;
+  bool get autoPlayAudio => _autoPlayAudio;
 
   String get userId => _userId;
   String get userName => _userName;
@@ -166,9 +169,6 @@ class WalkieTalkieViewModel extends ChangeNotifier {
   void _setupNetworkListeners() {
     _messageSubscription = _networkService.messageStream.listen((message) {
       switch (message['type'] as String) {
-        case 'audio':
-          _handleAudioMessage(message);
-          break;
         case 'transcript':
           _handleTranscriptMessage(message);
           break;
@@ -183,6 +183,12 @@ class WalkieTalkieViewModel extends ChangeNotifier {
       }
       _users = users;
       notifyListeners();
+    });
+
+    // Setup automatic audio playback listener
+    _audioPlaybackSubscription =
+        _localDbService.audioPlaybackStream.listen((transcription) {
+      _handleAutoAudioPlayback(transcription);
     });
 
     // Broadcast our partial transcripts in near real-time
@@ -326,10 +332,26 @@ class WalkieTalkieViewModel extends ChangeNotifier {
       final String userIdMsg = message['userId'] as String? ?? '';
       final String userNameMsg = message['userName'] as String? ?? 'Unknown';
       final String textMsg = (message['text'] as String? ?? '').trim();
+      final String? audioDataBase64 = message['audioData'] as String?;
       final int ts = (message['timestamp'] as int?) ??
           DateTime.now().millisecondsSinceEpoch;
 
       logger.i('Received transcript message from $userNameMsg: "$textMsg"');
+
+      // Handle audio playback if audio data is included with transcript
+      if (audioDataBase64 != null &&
+          audioDataBase64.isNotEmpty &&
+          userIdMsg != _userId) {
+        try {
+          logger.i(
+              '🎵 Playing audio from transcript: ${audioDataBase64.length} characters');
+          final audioData = base64Decode(audioDataBase64);
+          _audioService.playAudioData(Uint8List.fromList(audioData));
+          logger.i('🎵 Audio playback initiated from transcript');
+        } catch (e) {
+          logger.e('❌ Error playing audio from transcript: $e');
+        }
+      }
 
       if (textMsg.isEmpty) return;
 
@@ -411,27 +433,48 @@ class WalkieTalkieViewModel extends ChangeNotifier {
     return transcription.id.toString();
   }
 
-  void _handleAudioMessage(Map<String, dynamic> message) {
-    try {
-      final userId = message['userId'] as String?;
-      final audioDataBase64 = message['data'] as String;
+  // FIXED: _handleAudioMessage removed - audio playback now handled in _handleTranscriptMessage
 
-      if (userId == _userId) {
-        logger.d('Ignoring own audio message');
+  void _handleAutoAudioPlayback(Transcription transcription) {
+    try {
+      // Check if auto-play is enabled
+      if (!_autoPlayAudio) {
+        logger.d('🎵 Auto-playback disabled by user preference');
         return;
       }
 
-      logger.i('Received audio message from user: $userId');
-      logger.d('Audio data length: ${audioDataBase64.length} characters');
+      // Only play audio from other users, not from self
+      if (transcription.userId == _userId) {
+        logger.d('🎵 Ignoring auto-playback for own audio');
+        return;
+      }
 
-      final audioData = base64Decode(audioDataBase64);
-      logger.d('Decoded audio data length: ${audioData.length} bytes');
+      // Check if audio data exists
+      if (transcription.audioData == null || transcription.audioData!.isEmpty) {
+        logger.w('🎵 No audio data in transcription for auto-playback');
+        return;
+      }
 
-      _audioService.playAudioData(Uint8List.fromList(audioData));
-      logger.i('Audio playback initiated');
+      logger.i(
+          '🎵 Auto-playing audio from ${transcription.userName}: "${transcription.text}"');
+
+      try {
+        final audioData = base64Decode(transcription.audioData!);
+        _audioService.playAudioData(Uint8List.fromList(audioData));
+        logger.i('🎵 Auto audio playback initiated successfully');
+      } catch (e) {
+        logger.e('❌ Error in auto audio playback: $e');
+      }
     } catch (e) {
-      logger.e('Failed to handle audio message: $e');
+      logger.e('❌ Error in _handleAutoAudioPlayback: $e');
     }
+  }
+
+  // Method to toggle auto-playback setting
+  void toggleAutoPlayAudio() {
+    _autoPlayAudio = !_autoPlayAudio;
+    logger.i('🎵 Auto-playback setting changed to: $_autoPlayAudio');
+    notifyListeners();
   }
 
   Future<String?> startAsServer() async {
@@ -756,20 +799,34 @@ class WalkieTalkieViewModel extends ChangeNotifier {
       // Stop audio recording and STT in coordinated manner
       final audioData = await _stopAudioAndSTT();
 
-      // Send audio data if available
+      // Encode audio data as base64 for database storage
+      String? audioDataBase64;
+      String? audioFileName;
       if (audioData != null && audioData.isNotEmpty) {
         try {
           logger.i(
-              'Sending audio data: [${audioData.length} bytes from user $_userId]');
-          _networkService.sendAudioData(audioData, _userId);
-          logger.i('Audio data sent successfully');
+              'Encoding audio for database storage: [${audioData.length} bytes from user $_userId]');
+
+          // Generate filename with timestamp
+          final timestamp = DateTime.now().millisecondsSinceEpoch;
+          audioFileName = 'audio_${_userId}_$timestamp.wav';
+
+          // Encode audio data as base64
+          audioDataBase64 = base64Encode(audioData);
+
+          logger.i(
+              '✅ Audio encoded for database storage: ${audioDataBase64.length} characters');
+
+          // FIXED: Audio data is stored with transcript, no need for separate audio message
+          // The audio data will be included when the transcript is saved
+          logger.i('📡 Audio data will be stored with transcript in database');
         } catch (e) {
-          logger.e('Error sending audio data: $e');
-          _lastError = 'Failed to send audio data';
+          logger.e('Error encoding audio for database: $e');
+          _lastError = 'Failed to encode audio data: $e';
           notifyListeners();
         }
       } else {
-        logger.w('No audio data to send - audio recording may have failed');
+        logger.w('No audio data to encode - audio recording may have failed');
         if (!_audioRecordingStarted) {
           logger.w('Audio recording was not started during this session');
         }
@@ -843,16 +900,18 @@ class WalkieTalkieViewModel extends ChangeNotifier {
               userName: _userName,
               text: transcript,
               timestamp: ts,
+              audioData: audioDataBase64,
+              audioFileName: audioFileName,
             );
             _activeTranscriptionKeyByUser[_userId] = _getTranscriptionKey(rec);
             _lastTranscriptTextByUser[_userId] = transcript;
             _lastTranscriptUpdatedAtByUser[_userId] = ts;
-            logger.i('Saved final transcription: "$transcript"');
+            logger.i('Saved final transcription with audio: "$transcript"');
 
             // FIXED: Don't broadcast transcript here - it's already stored in Firebase
             // The addTranscription() already stores it in the transcriptions table
             logger.i(
-                'Final transcript saved in Firebase, will be synced to other clients');
+                'Final transcript with audio URL saved in Firebase, will be synced to other clients');
           }
         } catch (e) {
           logger.e('Error saving/sending transcript: $e');
@@ -980,6 +1039,7 @@ class WalkieTalkieViewModel extends ChangeNotifier {
   void dispose() {
     _messageSubscription?.cancel();
     _userUpdateSubscription?.cancel();
+    _audioPlaybackSubscription?.cancel();
     _audioService.dispose();
     _networkService.disconnect();
     super.dispose();

@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:logger/logger.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 
@@ -155,9 +154,6 @@ class NetworkService {
       case 'leave':
         _handleUserLeft(message);
         break;
-      case 'audio':
-        _handleAudioMessage(message, sender);
-        break;
       case 'speaking_status':
         _handleSpeakingStatus(message);
         break;
@@ -303,14 +299,7 @@ class NetworkService {
     _userUpdateController.add(connectedUsers);
   }
 
-  void _handleAudioMessage(Map<String, dynamic> message, WebSocket? sender) {
-    if (_isServer) {
-      // Relay audio to all other clients
-      _broadcastMessage(message, exclude: sender);
-    }
-    // Audio will be handled by AudioService via messageStream
-    // This ensures both server and clients process audio for playback
-  }
+  // FIXED: _handleAudioMessage removed - audio data is now handled with transcripts
 
   void _handleSpeakingStatus(Map<String, dynamic> message) {
     final userId = message['userId'];
@@ -470,16 +459,7 @@ class NetworkService {
     });
   }
 
-  void sendAudioData(Uint8List audioData, String userId) {
-    logger.i('Sending audio data: ${audioData.length} bytes from user $userId');
-    sendMessage({
-      'type': 'audio',
-      'userId': userId,
-      'data': base64Encode(audioData),
-      'timestamp': DateTime.now().millisecondsSinceEpoch,
-    });
-    logger.d('Audio message queued for transmission');
-  }
+  // FIXED: sendAudioData removed - audio data is now stored with transcripts only
 
   void updateSpeakingStatus(String userId, bool isSpeaking) {
     if (AppConfig.useFirebaseAsServer && _roomService != null) {

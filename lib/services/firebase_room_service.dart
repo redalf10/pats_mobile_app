@@ -53,13 +53,7 @@ class FirebaseRoomService {
         }
       });
 
-      // Listen to audio table
-      _roomRef.child('audio').onChildAdded.listen((event) {
-        if (event.snapshot.value != null) {
-          final data = Map<String, dynamic>.from(event.snapshot.value as Map);
-          onMessage(data);
-        }
-      });
+      // FIXED: Audio table listener removed - audio data is now stored with transcripts only
 
       // Listen to transcripts table
       _roomRef.child('transcripts').onChildAdded.listen((event) {
@@ -133,13 +127,10 @@ class FirebaseRoomService {
 
       // FIXED: Route messages to appropriate tables based on type
       if (messageType == 'audio') {
-        // Audio messages go to the 'audio' table
-        await _roomRef.child('audio').push().set({
-          ...message,
-          'timestamp': ServerValue.timestamp,
-        });
+        // FIXED: Audio messages are no longer stored separately - audio data is stored with transcripts
+        // Only broadcast audio data for real-time playback, don't store in database
         logger.i(
-            '🔥 Audio message sent to audio table: ${message['userId']} (${message['data']?.length ?? 0} chars)');
+            '🔥 Audio message received for real-time playback: ${message['userId']} (${message['data']?.length ?? 0} chars)');
       } else if (messageType == 'transcript') {
         // Transcript messages go to the 'transcripts' table (not messages)
         await _roomRef.child('transcripts').push().set({

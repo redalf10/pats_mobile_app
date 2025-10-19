@@ -4,6 +4,7 @@ import '../models/transcription.dart';
 
 class FirebaseDbService {
   late final StreamController<List<Transcription>> _transcriptsController;
+  late final StreamController<Transcription> _audioPlaybackController;
   bool _isInitialized = false;
   DatabaseReference? _roomRef;
   StreamSubscription<DatabaseEvent>? _addedSub;
@@ -19,11 +20,14 @@ class FirebaseDbService {
   bool get isInitialized => _isInitialized;
   bool get isRoomSet => _roomRef != null;
   String? get currentRoomPath => _roomRef?.path;
+  Stream<Transcription> get audioPlaybackStream =>
+      _audioPlaybackController.stream;
 
   Future<void> init() async {
     try {
       _transcriptsController =
           StreamController<List<Transcription>>.broadcast();
+      _audioPlaybackController = StreamController<Transcription>.broadcast();
       _isInitialized = true;
       print('LocalDbService (firebase) initialized successfully');
     } catch (e) {
@@ -37,6 +41,8 @@ class FirebaseDbService {
     required String userName,
     required String text,
     required int timestamp,
+    String? audioData,
+    String? audioFileName,
   }) {
     if (_roomRef == null) {
       print('🔥 ERROR: Room is not set for LocalDbService');
@@ -70,6 +76,8 @@ class FirebaseDbService {
       userName: userName,
       text: text,
       timestamp: timestamp,
+      audioData: audioData,
+      audioFileName: audioFileName,
     );
     final ref = _roomRef!.child('transcripts').push();
     final idStr = ref.key!;
@@ -80,13 +88,19 @@ class FirebaseDbService {
     // Store the key for future updates
     _lastTranscriptionKey = idStr;
 
-    ref.set({
+    final data = {
       'id': idStr,
       'userId': userId,
       'userName': userName,
       'text': text,
       'timestamp': timestamp,
-    }).then((_) {
+    };
+
+    // Only include audio fields if they exist
+    if (audioData != null) data['audioData'] = audioData;
+    if (audioFileName != null) data['audioFileName'] = audioFileName;
+
+    ref.set(data).then((_) {
       print('🔥 FirebaseDbService: Successfully saved to Firebase');
     }).catchError((error) {
       print('🔥 FirebaseDbService: Error saving to Firebase: $error');
@@ -134,6 +148,8 @@ class FirebaseDbService {
           userName: userName,
           text: text,
           timestamp: timestamp,
+          audioData: lastTranscription.audioData,
+          audioFileName: lastTranscription.audioFileName,
         );
         _emitTranscriptions();
 
@@ -317,6 +333,8 @@ class FirebaseDbService {
         userName: t.userName,
         text: newText,
         timestamp: timestamp, // Update timestamp to reflect the change
+        audioData: t.audioData,
+        audioFileName: t.audioFileName,
       );
 
       // Emit immediately for UI responsiveness
@@ -349,6 +367,11 @@ class FirebaseDbService {
       _transcriptsController.close();
     } catch (e) {
       print('Error closing transcripts controller: $e');
+    }
+    try {
+      _audioPlaybackController.close();
+    } catch (e) {
+      print('Error closing audio playback controller: $e');
     }
     try {
       _addedSub?.cancel();
@@ -391,6 +414,8 @@ class FirebaseDbService {
           userName: (m['userName'] ?? '') as String,
           text: (m['text'] ?? '') as String,
           timestamp: (m['timestamp'] ?? 0) as int,
+          audioData: m['audioData'] as String?,
+          audioFileName: m['audioFileName'] as String?,
         );
       }
       // Set the last key to the most recent transcription
@@ -418,15 +443,27 @@ class FirebaseDbService {
 
         // Only add if not already in cache (to avoid duplicates from initial load)
         if (!_transcriptsCache.containsKey(key)) {
-          _transcriptsCache[key] = Transcription(
+          final transcription = Transcription(
             id: key.hashCode,
             userId: (m['userId'] ?? '') as String,
             userName: (m['userName'] ?? '') as String,
             text: (m['text'] ?? '') as String,
             timestamp: (m['timestamp'] ?? 0) as int,
+            audioData: m['audioData'] as String?,
+            audioFileName: m['audioFileName'] as String?,
           );
+
+          _transcriptsCache[key] = transcription;
           _lastTranscriptionKey = key;
           _emitTranscriptions();
+
+          // Emit audio playback event if transcript has audio data
+          if (transcription.audioData != null &&
+              transcription.audioData!.isNotEmpty) {
+            print(
+                '🔥 FirebaseDbService: Emitting audio playback event for transcript from ${transcription.userName}');
+            _audioPlaybackController.add(transcription);
+          }
         }
       }
     });
@@ -446,6 +483,8 @@ class FirebaseDbService {
           userName: (m['userName'] ?? '') as String,
           text: (m['text'] ?? '') as String,
           timestamp: (m['timestamp'] ?? 0) as int,
+          audioData: m['audioData'] as String?,
+          audioFileName: m['audioFileName'] as String?,
         );
         _emitTranscriptions();
       }

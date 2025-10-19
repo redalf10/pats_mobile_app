@@ -1,10 +1,14 @@
+import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/user.dart';
 import '../models/transcription.dart';
 import '../services/firebase_service.dart';
+import '../services/audio_service.dart';
 import '../config/theme_config.dart';
 import '../viewmodels/transcription_viewmodel.dart';
+import '../viewmodels/walkie_talkie_viewmodel.dart';
 
 class UserListWidget extends StatelessWidget {
   final List<User> users;
@@ -241,6 +245,118 @@ class UserListWidget extends StatelessWidget {
               fontWeight: FontWeight.w400,
             ),
           ),
+
+          // Audio Playback Section
+          if (transcription.audioData != null &&
+              transcription.audioData!.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surface.withOpacity(0.5),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: AppTheme.secondaryColor.withOpacity(0.2),
+                  width: 1,
+                ),
+              ),
+              child: Consumer<AudioService>(
+                builder: (context, audioService, child) {
+                  final isPlaying = audioService.isPlaying;
+                  final audioSize = transcription.audioData?.length ?? 0;
+                  final audioSizeKB = (audioSize / 1024).toStringAsFixed(1);
+
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.audiotrack,
+                            size: 16,
+                            color: AppTheme.secondaryColor.withOpacity(0.7),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Audio Recording',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w500,
+                                    color: AppTheme.secondaryColor
+                                        .withOpacity(0.8),
+                                  ),
+                                ),
+                                Text(
+                                  '${audioSizeKB} KB • WAV format',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: theme.colorScheme.onSurface
+                                        .withOpacity(0.6),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () => _playAudio(context, transcription),
+                            icon: Icon(
+                              isPlaying ? Icons.stop : Icons.play_arrow,
+                              color: isPlaying
+                                  ? Colors.red
+                                  : AppTheme.secondaryColor,
+                              size: 20,
+                            ),
+                            style: IconButton.styleFrom(
+                              backgroundColor: isPlaying
+                                  ? Colors.red.withOpacity(0.1)
+                                  : AppTheme.secondaryColor.withOpacity(0.1),
+                              padding: const EdgeInsets.all(8),
+                            ),
+                            tooltip: isPlaying ? 'Stop audio' : 'Play audio',
+                          ),
+                        ],
+                      ),
+                      if (isPlaying) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          height: 3,
+                          decoration: BoxDecoration(
+                            color: AppTheme.secondaryColor.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 60, // Visual progress indicator
+                                height: 3,
+                                decoration: BoxDecoration(
+                                  color: AppTheme.secondaryColor,
+                                  borderRadius: BorderRadius.circular(2),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Playing audio...',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: AppTheme.secondaryColor,
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                      ],
+                    ],
+                  );
+                },
+              ),
+            ),
+          ],
 
           // Aviation Terms Analysis Section
           Consumer<TranscriptionViewModel>(
@@ -518,6 +634,73 @@ class UserListWidget extends StatelessWidget {
                 ),
               ),
               const Spacer(),
+              Consumer<AudioService>(
+                builder: (context, audioService, child) {
+                  if (audioService.isPlaying) {
+                    return Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppTheme.secondaryColor.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: AppTheme.secondaryColor.withOpacity(0.3),
+                          width: 1,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.volume_up,
+                            size: 14,
+                            color: AppTheme.secondaryColor,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Playing',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                              color: AppTheme.secondaryColor,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          GestureDetector(
+                            onTap: () => audioService.stopAudioPlayback(),
+                            child: Icon(
+                              Icons.stop,
+                              size: 16,
+                              color: Colors.red,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
+                  return const SizedBox.shrink();
+                },
+              ),
+              const SizedBox(width: 8),
+              Consumer<WalkieTalkieViewModel>(
+                builder: (context, viewModel, child) {
+                  return IconButton(
+                    onPressed: () => viewModel.toggleAutoPlayAudio(),
+                    icon: Icon(
+                      viewModel.autoPlayAudio
+                          ? Icons.volume_up
+                          : Icons.volume_off,
+                      size: 20,
+                      color: viewModel.autoPlayAudio
+                          ? AppTheme.secondaryColor
+                          : theme.colorScheme.onSurface.withOpacity(0.5),
+                    ),
+                    tooltip: viewModel.autoPlayAudio
+                        ? 'Disable auto-playback'
+                        : 'Enable auto-playback',
+                  );
+                },
+              ),
               IconButton(
                 onPressed: () => _removeDuplicates(context),
                 icon: Icon(
@@ -760,5 +943,108 @@ class UserListWidget extends StatelessWidget {
   void _removeDuplicates(BuildContext context) {
     final dbService = context.read<FirebaseDbService>();
     dbService.removeDuplicateTranscriptions();
+  }
+
+  void _playAudio(BuildContext context, Transcription transcription) async {
+    try {
+      final audioService = context.read<AudioService>();
+
+      // Check if audio is currently playing
+      if (audioService.isPlaying) {
+        // Stop current audio
+        await audioService.stopAudioPlayback();
+        print('🎵 Stopped audio playback');
+        return;
+      }
+
+      // Decode and play audio
+      if (transcription.audioData != null &&
+          transcription.audioData!.isNotEmpty) {
+        print('🎵 Playing audio for transcript: "${transcription.text}"');
+
+        try {
+          final audioData = base64Decode(transcription.audioData!);
+          await audioService.playAudioData(Uint8List.fromList(audioData));
+          print('🎵 Audio playback started successfully');
+
+          // Show a snackbar to indicate playback started
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Row(
+                  children: [
+                    Icon(
+                      Icons.play_arrow,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    Text('Playing audio from ${transcription.userName}'),
+                  ],
+                ),
+                backgroundColor: AppTheme.secondaryColor,
+                duration: const Duration(seconds: 2),
+                behavior: SnackBarBehavior.floating,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            );
+          }
+        } catch (e) {
+          print('❌ Error playing audio: $e');
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Row(
+                  children: [
+                    Icon(
+                      Icons.error_outline,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    Text('Failed to play audio: $e'),
+                  ],
+                ),
+                backgroundColor: Colors.red,
+                duration: const Duration(seconds: 3),
+                behavior: SnackBarBehavior.floating,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            );
+          }
+        }
+      } else {
+        print('⚠️ No audio data available for this transcript');
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  Icon(
+                    Icons.info_outline,
+                    color: Colors.white,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 8),
+                  Text('No audio available for this transcript'),
+                ],
+              ),
+              backgroundColor: Colors.orange,
+              duration: const Duration(seconds: 2),
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      print('❌ Error in _playAudio: $e');
+    }
   }
 }
