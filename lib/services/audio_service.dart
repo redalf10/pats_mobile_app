@@ -72,6 +72,13 @@ class AudioService {
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       _currentRecordingPath = '${directory.path}/audio_$timestamp.wav';
 
+      // Check if microphone is available
+      final hasPermission = await _recorder.hasPermission();
+      if (!hasPermission) {
+        logger.e('Microphone permission not available for recording');
+        return null;
+      }
+
       await _recorder.start(
         const RecordConfig(
           encoder: AudioEncoder.wav,
@@ -82,9 +89,16 @@ class AudioService {
       );
 
       _isRecording = true;
+      logger.i('Audio recording started successfully: $_currentRecordingPath');
       return _currentRecordingPath;
     } catch (e) {
       logger.e('Failed to start recording: $e');
+      // Check if the error is related to microphone being in use
+      if (e.toString().contains('microphone') ||
+          e.toString().contains('audio') ||
+          e.toString().contains('busy')) {
+        logger.w('Microphone may be in use by another service (STT)');
+      }
       return null;
     }
   }
@@ -358,6 +372,33 @@ class AudioService {
     } catch (e) {
       logger.e('Error resetting STT state: $e');
     }
+  }
+
+  /// Check if microphone is available for recording
+  Future<bool> isMicrophoneAvailable() async {
+    try {
+      final hasPermission = await Permission.microphone.isGranted;
+      if (!hasPermission) return false;
+
+      // Try to check if recorder can access microphone
+      final recorderPermission = await _recorder.hasPermission();
+      return recorderPermission;
+    } catch (e) {
+      logger.e('Error checking microphone availability: $e');
+      return false;
+    }
+  }
+
+  /// Try to start recording with fallback if microphone is busy
+  Future<String?> startRecordingWithFallback() async {
+    // First try normal recording
+    final result = await startRecording();
+    if (result != null) return result;
+
+    // If that fails, try with a small delay (in case STT is still initializing)
+    logger.i('Initial recording failed, trying with delay...');
+    await Future.delayed(const Duration(milliseconds: 1000));
+    return await startRecording();
   }
 
   Future<void> dispose() async {

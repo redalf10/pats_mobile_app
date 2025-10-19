@@ -38,7 +38,6 @@ class WalkieTalkieViewModel extends ChangeNotifier {
   Logger logger = Logger();
 
   // Audio and STT coordination
-  static const bool enableAudioRecordingDuringTalk = true;
   static const int _mergeWindowMs = 6000;
 
   // Track active transcript per user to avoid duplicate records from partials
@@ -533,17 +532,15 @@ class WalkieTalkieViewModel extends ChangeNotifier {
   }
 
   /// Start audio recording and STT listening in coordinated manner
-  /// FIXED: Use STT-only mode to avoid microphone conflicts
+  /// FIXED: Start both STT and audio recording simultaneously for dual functionality
   Future<void> _startAudioAndSTT() async {
     _audioRecordingStarted = false;
     _sttStarted = false;
     _audioRecordingCompleter = Completer<Uint8List?>();
 
     try {
-      // FIXED: Start STT first and only, since it can provide both transcription and audio data
-      // This avoids microphone conflicts between AudioRecorder and SpeechToText
-      logger.i('Starting STT listening (primary mode)...');
-
+      // Start STT for transcription first
+      logger.i('Starting STT listening...');
       bool sttStarted = false;
       try {
         sttStarted = await _audioService
@@ -553,24 +550,36 @@ class WalkieTalkieViewModel extends ChangeNotifier {
         if (sttStarted) {
           logger.i('STT started successfully');
           _sttStarted = true;
+          // Add a small delay to let STT stabilize before starting recording
+          await Future.delayed(const Duration(milliseconds: 500));
         }
       } catch (e) {
         logger.e('STT start timeout or error: $e');
         sttStarted = false;
       }
 
-      if (!_sttStarted) {
-        logger.e('Failed to start STT');
-        _lastError = 'Failed to start speech recognition';
-        _audioRecordingCompleter?.completeError('STT failed to start');
-        throw Exception('STT failed to start');
+      // Start audio recording for audio transmission
+      logger.i('Starting audio recording...');
+      String? recordingPath;
+
+      // Try the fallback method first
+      try {
+        logger.i('Attempting to start recording with fallback...');
+        recordingPath = await _audioService
+            .startRecordingWithFallback()
+            .timeout(const Duration(seconds: 5));
+
+        if (recordingPath != null) {
+          logger
+              .i('Recorder started successfully with fallback: $recordingPath');
+          _audioRecordingStarted = true;
+        }
+      } catch (e) {
+        logger.w('Recording with fallback failed: $e');
       }
 
-      // FIXED: Only start audio recording if STT is not available or fails
-      // This prevents microphone conflicts
-      if (enableAudioRecordingDuringTalk && !_sttStarted) {
-        logger.i('STT failed, falling back to audio recording only...');
-        String? recordingPath;
+      // If fallback failed, try multiple attempts
+      if (recordingPath == null) {
         for (int attempt = 0; attempt < 3 && recordingPath == null; attempt++) {
           try {
             logger.i('Starting recorder (attempt ${attempt + 1})...');
@@ -583,23 +592,33 @@ class WalkieTalkieViewModel extends ChangeNotifier {
               _audioRecordingStarted = true;
             }
           } catch (e) {
-            final backoffMs = 300 * (attempt + 1);
-            logger.w(
-                'Recorder start failed (attempt ${attempt + 1}): $e. Retrying in ${backoffMs}ms');
-            await Future.delayed(Duration(milliseconds: backoffMs));
+            logger.w('Recorder start failed (attempt ${attempt + 1}): $e');
+            if (recordingPath == null && attempt < 2) {
+              final backoffMs = 500 * (attempt + 1);
+              logger.w('Retrying in ${backoffMs}ms');
+              await Future.delayed(Duration(milliseconds: backoffMs));
+            }
           }
-        }
-
-        if (!_audioRecordingStarted) {
-          logger.e('Failed to start recorder after retries');
-          _lastError =
-              'Audio recording failed to start. Please check microphone permissions.';
-          _audioRecordingCompleter?.completeError('Recording failed to start');
-          throw Exception('Recording failed to start');
         }
       }
 
-      logger.i('Audio/STT services started successfully');
+      // Check if at least one service started successfully
+      if (!_sttStarted && !_audioRecordingStarted) {
+        logger.e('Failed to start both STT and audio recording');
+        _lastError = 'Failed to start speech recognition and audio recording';
+        _audioRecordingCompleter
+            ?.completeError('Both services failed to start');
+        throw Exception('Both STT and audio recording failed to start');
+      } else if (!_sttStarted) {
+        logger.w('STT failed to start, but audio recording is working');
+        _lastError = 'Speech recognition failed, but audio recording is active';
+      } else if (!_audioRecordingStarted) {
+        logger.w('Audio recording failed to start, but STT is working');
+        _lastError = 'Audio recording failed, but speech recognition is active';
+      }
+
+      logger.i(
+          'Audio/STT services started - STT: $_sttStarted, Recording: $_audioRecordingStarted');
     } catch (e) {
       logger.e('Error starting audio and STT: $e');
       _audioRecordingCompleter?.completeError(e);
@@ -737,9 +756,7 @@ class WalkieTalkieViewModel extends ChangeNotifier {
       // Stop audio recording and STT in coordinated manner
       final audioData = await _stopAudioAndSTT();
 
-      // FIXED: Send audio data if available (even if STT was primary mode)
-      // Note: In STT-only mode, we don't have raw audio data to send, which is fine
-      // because transcripts are the primary data and audio is supplementary
+      // Send audio data if available
       if (audioData != null && audioData.isNotEmpty) {
         try {
           logger.i(
@@ -752,8 +769,10 @@ class WalkieTalkieViewModel extends ChangeNotifier {
           notifyListeners();
         }
       } else {
-        logger.w(
-            'No audio data to send (STT-only mode - transcripts are primary data)');
+        logger.w('No audio data to send - audio recording may have failed');
+        if (!_audioRecordingStarted) {
+          logger.w('Audio recording was not started during this session');
+        }
       }
 
       // Get final transcription
