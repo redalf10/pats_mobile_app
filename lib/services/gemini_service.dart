@@ -28,26 +28,42 @@ class GeminiService {
       print('🚁 Analyzing text for aviation terms: $sanitized');
 
       final prompt = '''
-You are an aviation expert. Analyze the following text and identify ALL aviation-related terms, flight operations, aircraft terminology, airport codes, flight numbers, and aviation procedures.
+You are an aviation communication assistant trained on air traffic control (ATC) and pilot radio phraseology.
+Your task is to:
 
-Look for terms like:
-- Flight numbers (e.g., "Flight 4B7", "AA123")
-- Aircraft types and models
-- Airport names and codes (e.g., "Hong Kong", "San Francisco", "LAX", "JFK")
-- Aviation procedures (e.g., "take-off", "landing", "boarding", "departure")
-- Aviation terminology (e.g., "runway", "taxi", "gate", "terminal")
-- Airline names and codes
-- Aviation weather terms
-- Navigation and communication terms
+Identify the aviation context of the spoken phrase (e.g., taxi request, landing clearance, approach report, etc.).
 
-For each aviation term found, provide up to 3 related synonyms or alternative terms.
+Suggest one or more aviation scripts or phrases that sound similar, have a related meaning, or are typically used in the same situation — based on standard ICAO/FAA/Philippine ATC procedures and the Flight Procedures Script reference.
 
-Format each line exactly as:
-term: synonym1, synonym2, synonym3
+Keep responses concise and professional, just like real ATC/pilot radio transmissions.
+
+If the spoken phrase is unclear, suggest the closest matching script based on phonetic or procedural similarity.
+
+Example Interaction:
+
+🎙 User says: "Tower, RPC 223 ready for departure." (dont include this in your response)
+
+🤖 AI Suggestion:
+"Did you mean: 'PhilSCA Tower, RPC 223, ready for take-off'?
+Related phrase: 'RPC 223, cleared for take-off, wind 060 at 8 knots.'"
+
+🎙 User says: "Cleared for taxi." (dont include this in your response)
+
+🤖 AI Suggestion:
+"Similar script: 'PhilSCA Tower, Philippine 145, now ready for taxi.'
+Related term: 'Taxi via C2, B, H1, hold short runway 06.'"
+
+Formatting Rules:
+
+If the user's phrase matches a known phrase from the script → show the closest complete line from the official script.
+
+If it's not an exact match → suggest related or phonetically similar aviation terms (e.g., "pushback approved," "hold short," "report over [waypoint]").
+
+Include context tags like [Start-Up], [Taxi], [Takeoff], [Landing], etc. to help categorize responses.
 
 Text to analyze: "$sanitized"
 
-Respond ONLY with the term:synonym format, one per line. No explanations or extra text.
+Respond with aviation script suggestions and related phrases in the format shown above. Be concise and professional.
 ''';
 
       final content = [Content.text(prompt)];
