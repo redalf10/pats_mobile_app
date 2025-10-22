@@ -63,6 +63,10 @@ class UserListWidget extends StatelessWidget {
   }
 
   Widget _buildUserCard(User user, ThemeData theme) {
+    // Debug logging for speaking status
+    print(
+        '🎤 UserListWidget: Building card for ${user.name} - isSpeaking: ${user.isSpeaking}');
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),

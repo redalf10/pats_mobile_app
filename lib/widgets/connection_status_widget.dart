@@ -37,8 +37,8 @@ class ConnectionStatusWidget extends StatelessWidget {
     }
 
     return Container(
-      margin: const EdgeInsets.all(16),
-      padding: const EdgeInsets.all(20),
+      margin: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [
@@ -62,7 +62,7 @@ class ConnectionStatusWidget extends StatelessWidget {
             child: Icon(
               statusIcon,
               color: statusColor,
-              size: 24,
+              size: 20,
             ),
           ),
           const SizedBox(width: 16),

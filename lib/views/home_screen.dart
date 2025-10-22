@@ -302,7 +302,7 @@ class _WalkieTalkieViewState extends State<WalkieTalkieView> {
                     child: UserListWidget(users: viewModel.users),
                   ),
                   WaveformWidget(isTalking: viewModel.isTalking),
-                  const SizedBox(height: 32),
+                  const SizedBox(height: 16),
                   TalkButton(
                     isTalking: viewModel.isTalking,
                     onTalkStart: viewModel.startTalking,
@@ -310,7 +310,7 @@ class _WalkieTalkieViewState extends State<WalkieTalkieView> {
                     enabled: true, // Connection-based enabling
                     userRole: viewModel.currentUserRole,
                   ),
-                  const SizedBox(height: 40),
+                  const SizedBox(height: 24),
                 ],
               ),
             ),

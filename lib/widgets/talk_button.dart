@@ -237,8 +237,8 @@ class _TalkButtonState extends State<TalkButton> with TickerProviderStateMixin {
                 return Transform.scale(
                   scale: _scaleAnimation.value,
                   child: Container(
-                    width: 140,
-                    height: 140,
+                    width: 100,
+                    height: 100,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       gradient: RadialGradient(
@@ -284,7 +284,7 @@ class _TalkButtonState extends State<TalkButton> with TickerProviderStateMixin {
                               child: const Icon(
                                 Icons.mic,
                                 color: Colors.white,
-                                size: 48,
+                                size: 36,
                               ),
                             ),
                           )
@@ -293,7 +293,7 @@ class _TalkButtonState extends State<TalkButton> with TickerProviderStateMixin {
                             color: canUseMic
                                 ? Colors.white
                                 : Colors.white.withOpacity(0.5),
-                            size: 48,
+                            size: 36,
                           ),
                   ),
                 );
@@ -301,14 +301,14 @@ class _TalkButtonState extends State<TalkButton> with TickerProviderStateMixin {
             ),
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 6),
         Text(
           _getMicrophoneStatusText(),
           style: TextStyle(
             color: canUseMic
                 ? Theme.of(context).colorScheme.onSurface.withOpacity(0.7)
                 : Colors.red.withOpacity(0.7),
-            fontSize: 12,
+            fontSize: 11,
             fontWeight: FontWeight.w500,
           ),
           textAlign: TextAlign.center,

@@ -69,14 +69,12 @@ class _ConnectionSetupWidgetState extends State<ConnectionSetupWidget>
                     children: [
                       Image.asset(
                         'assets/pats_logo.png',
-                        height: 200,
+                        height: 150,
                       ),
-
-                      const SizedBox(height: 10),
                       Text(
                         'Choose your connection mode',
                         style: TextStyle(
-                          fontSize: 16,
+                          fontSize: 12,
                           color: theme.colorScheme.onSurface.withOpacity(0.7),
                         ),
                       ),
@@ -132,7 +130,7 @@ class _ConnectionSetupWidgetState extends State<ConnectionSetupWidget>
                             Text(
                               'Join a Room',
                               style: TextStyle(
-                                fontSize: 20,
+                                fontSize: 16,
                                 fontWeight: FontWeight.w600,
                                 color: theme.colorScheme.onSurface,
                               ),
@@ -144,10 +142,10 @@ class _ConnectionSetupWidgetState extends State<ConnectionSetupWidget>
                               style: TextStyle(
                                 color: theme.colorScheme.onSurface
                                     .withOpacity(0.7),
-                                fontSize: 14,
+                                fontSize: 12,
                               ),
                             ),
-                            const SizedBox(height: 24),
+                            const SizedBox(height: 18),
                             Container(
                               decoration: BoxDecoration(
                                 color: theme.colorScheme.surface,
@@ -160,7 +158,7 @@ class _ConnectionSetupWidgetState extends State<ConnectionSetupWidget>
                                 controller: _serverIPController,
                                 style: TextStyle(
                                   color: theme.colorScheme.onSurface,
-                                  fontSize: 16,
+                                  fontSize: 14,
                                 ),
                                 decoration: InputDecoration(
                                   labelText: 'Room Code',
@@ -174,7 +172,7 @@ class _ConnectionSetupWidgetState extends State<ConnectionSetupWidget>
                                         .withOpacity(0.5),
                                   ),
                                   border: InputBorder.none,
-                                  contentPadding: const EdgeInsets.all(20),
+                                  contentPadding: const EdgeInsets.all(15),
                                 ),
                                 textCapitalization:
                                     TextCapitalization.characters,
@@ -221,7 +219,7 @@ class _ConnectionSetupWidgetState extends State<ConnectionSetupWidget>
                                           'Connect',
                                           style: TextStyle(
                                             color: Colors.white,
-                                            fontSize: 16,
+                                            fontSize: 14,
                                             fontWeight: FontWeight.w600,
                                           ),
                                         ),
@@ -277,7 +275,7 @@ class _ConnectionSetupWidgetState extends State<ConnectionSetupWidget>
           Text(
             title,
             style: TextStyle(
-              fontSize: 20,
+              fontSize: 16,
               fontWeight: FontWeight.w600,
               color: theme.colorScheme.onSurface,
             ),
@@ -288,7 +286,7 @@ class _ConnectionSetupWidgetState extends State<ConnectionSetupWidget>
             textAlign: TextAlign.center,
             style: TextStyle(
               color: theme.colorScheme.onSurface.withOpacity(0.7),
-              fontSize: 14,
+              fontSize: 12,
             ),
           ),
           const SizedBox(height: 24),
@@ -324,7 +322,7 @@ class _ConnectionSetupWidgetState extends State<ConnectionSetupWidget>
                         'Start Server',
                         style: TextStyle(
                           color: Colors.white,
-                          fontSize: 16,
+                          fontSize: 14,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
