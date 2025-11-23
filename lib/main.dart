@@ -41,7 +41,17 @@ class MyApp extends StatelessWidget {
         Provider<NetworkService>(create: (_) => NetworkService()),
         Provider<FirebaseDbService>(create: (_) => dbService),
         Provider<GeminiService>(create: (_) => GeminiService()),
-        ChangeNotifierProvider(create: (_) => TranscriptionViewModel()),
+        ChangeNotifierProvider<TranscriptionViewModel>(
+          create: (context) {
+            final viewModel = TranscriptionViewModel();
+            // Set up automatic analysis after the provider is created
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              final dbService = context.read<FirebaseDbService>();
+              viewModel.setupAutoAnalysis(dbService);
+            });
+            return viewModel;
+          },
+        ),
         ChangeNotifierProvider<WalkieTalkieViewModel>(
           create: (context) {
             final audio = context.read<AudioService>();

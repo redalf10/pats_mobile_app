@@ -53,19 +53,19 @@ class ConnectionStatusWidget extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: statusColor.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(
-              statusIcon,
-              color: statusColor,
-              size: 20,
-            ),
-          ),
-          const SizedBox(width: 16),
+          // Container(
+          //   padding: const EdgeInsets.all(12),
+          //   decoration: BoxDecoration(
+          //     color: statusColor.withOpacity(0.2),
+          //     borderRadius: BorderRadius.circular(12),
+          //   ),
+          //   child: Icon(
+          //     statusIcon,
+          //     color: statusColor,
+          //     size: 20,
+          //   ),
+          // ),
+          // const SizedBox(width: 16),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,

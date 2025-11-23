@@ -1,13 +1,18 @@
 import 'package:flutter/material.dart';
 import '../services/gemini_service.dart';
+import '../services/firebase_service.dart';
+import '../models/transcription.dart';
+import 'dart:async';
 
 class TranscriptionViewModel extends ChangeNotifier {
   final GeminiService _geminiService = GeminiService();
+  StreamSubscription<List<Transcription>>? _transcriptionSubscription;
 
   // Store synonyms per transcription ID to avoid re-analyzing
   final Map<int, Map<String, List<String>>> _synonymsCache = {};
   final Set<int> _loadingIds = {};
   final Set<int> _analyzedIds = {}; // Track what's been analyzed
+  final Set<int> _autoAnalyzedIds = {}; // Track what's been auto-analyzed
 
   Map<String, List<String>> getSynonymsForTranscription(int transcriptionId) {
     return _synonymsCache[transcriptionId] ?? {};
@@ -19,6 +24,42 @@ class TranscriptionViewModel extends ChangeNotifier {
 
   bool hasBeenAnalyzed(int transcriptionId) {
     return _analyzedIds.contains(transcriptionId);
+  }
+
+  bool hasBeenAutoAnalyzed(int transcriptionId) {
+    return _autoAnalyzedIds.contains(transcriptionId);
+  }
+
+  // Set up automatic analysis for new transcriptions
+  void setupAutoAnalysis(FirebaseDbService dbService) {
+    _transcriptionSubscription?.cancel();
+    _transcriptionSubscription =
+        dbService.watchAllNewestFirst().listen((transcriptions) {
+      // Only analyze the most recent transcription if it hasn't been analyzed yet
+      if (transcriptions.isNotEmpty) {
+        final latestTranscription = transcriptions.first;
+        final transcriptionId = latestTranscription.timestamp;
+
+        // Check if this transcription hasn't been auto-analyzed yet
+        if (!_autoAnalyzedIds.contains(transcriptionId) &&
+            !_analyzedIds.contains(transcriptionId) &&
+            !_loadingIds.contains(transcriptionId)) {
+          print(
+              '🚁 Auto-analyzing new transcription: "${latestTranscription.text}" (ID: $transcriptionId)');
+          _autoAnalyzedIds.add(transcriptionId);
+          analyzeSynonyms(transcriptionId, latestTranscription.text);
+        } else {
+          print(
+              '🚁 Skipping analysis for transcription $transcriptionId - already processed');
+        }
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _transcriptionSubscription?.cancel();
+    super.dispose();
   }
 
   Future<void> analyzeSynonyms(int transcriptionId, String text) async {
@@ -71,6 +112,7 @@ class TranscriptionViewModel extends ChangeNotifier {
     _synonymsCache.clear();
     _loadingIds.clear();
     _analyzedIds.clear();
+    _autoAnalyzedIds.clear();
     notifyListeners();
   }
 }

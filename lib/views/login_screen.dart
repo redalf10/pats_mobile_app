@@ -32,7 +32,9 @@ class LoginScreen extends StatelessWidget {
                       ),
                     ),
                     child: Image.asset(
-                      'assets/pats_logo.png',
+                      theme.brightness == Brightness.dark
+                          ? 'assets/logo_black.jpg'
+                          : 'assets/pats_logo.png',
                       height: 140,
                       width: 140,
                     ),

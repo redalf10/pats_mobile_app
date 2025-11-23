@@ -29,41 +29,34 @@ class GeminiService {
 
       final prompt = '''
 You are an aviation communication assistant trained on air traffic control (ATC) and pilot radio phraseology.
+
 Your task is to:
 
-Identify the aviation context of the spoken phrase (e.g., taxi request, landing clearance, approach report, etc.).
+1. Suggest one or more aviation scripts or phrases that sound similar, have a related meaning, or are typically used in the same situation — based on standard ICAO/FAA/Philippine ATC procedures and the Flight Procedures Script reference.
+3. Convert any aircraft call signs, letters, or identifiers into the NATO phonetic alphabet.
+4. Include **ICAO airport codes** and expand them to their **full airport names**, especially for Philippine airports.
 
-Suggest one or more aviation scripts or phrases that sound similar, have a related meaning, or are typically used in the same situation — based on standard ICAO/FAA/Philippine ATC procedures and the Flight Procedures Script reference.
+If the spoken phrase is unclear, suggest the closest matching script based on phonetic or procedural similarity especially the word PhilSCA.
 
-Keep responses concise and professional, just like real ATC/pilot radio transmissions.
+Formatting Rules:
+- If the user's phrase matches a known script → show the closest complete line from the official ATC script.
+- If it's not an exact match → suggest related or phonetically similar aviation terms.
 
-If the spoken phrase is unclear, suggest the closest matching script based on phonetic or procedural similarity.
+When displaying call signs or ICAO codes:
+- Replace any letters with their **NATO phonetic equivalents**.
+- If an ICAO airport code is detected, include the corresponding **airport name** in parentheses.
 
 Example Interaction:
 
-🎙 User says: "Tower, RPC 223 ready for departure." (dont include this in your response)
+🎙 User says: "Tower, RPC 223 ready for departure."
 
 🤖 AI Suggestion:
-"Did you mean: 'PhilSCA Tower, RPC 223, ready for take-off'?
-Related phrase: 'RPC 223, cleared for take-off, wind 060 at 8 knots.'"
-
-🎙 User says: "Cleared for taxi." (dont include this in your response)
-
-🤖 AI Suggestion:
-"Similar script: 'PhilSCA Tower, Philippine 145, now ready for taxi.'
-Related term: 'Taxi via C2, B, H1, hold short runway 06.'"
-
-Formatting Rules:
-
-If the user's phrase matches a known phrase from the script → show the closest complete line from the official script.
-
-If it's not an exact match → suggest related or phonetically similar aviation terms (e.g., "pushback approved," "hold short," "report over [waypoint]").
-
-Include context tags like [Start-Up], [Taxi], [Takeoff], [Landing], etc. to help categorize responses.
+"Did you mean: 'PhilSCA Tower, Romeo Papa Charlie Two Two Three, ready for take-off'?
+Related phrase: 'Romeo Papa Charlie Two Two Three, cleared for take-off, wind 060 at 8 knots.'"
 
 Text to analyze: "$sanitized"
 
-Respond with aviation script suggestions and related phrases in the format shown above. Be concise and professional.
+Respond with aviation script suggestions and related phrases in the concise, professional format shown above.
 ''';
 
       final content = [Content.text(prompt)];
@@ -75,7 +68,7 @@ Respond with aviation script suggestions and related phrases in the format shown
 
       // Check if response has valid text
       if (response.text == null || response.text!.isEmpty) {
-        print('Empty response from Gemini');
+        // print('Empty response from Gemini');
         return {};
       }
 
@@ -98,10 +91,16 @@ Respond with aviation script suggestions and related phrases in the format shown
 
         if (word.isEmpty || synonymsPart.isEmpty) continue;
 
+        // Handle special case for no aviation terms
+        if (word == 'no_aviation_terms' && synonymsPart == 'none') {
+          print('🚁 No aviation terms detected in text');
+          return {};
+        }
+
         final synonyms = synonymsPart
             .split(',')
             .map((s) => s.trim())
-            .where((s) => s.isNotEmpty)
+            .where((s) => s.isNotEmpty && s != 'none')
             .take(3) // Limit to 3 synonyms
             .toList();
 

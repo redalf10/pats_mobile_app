@@ -68,7 +68,9 @@ class _ConnectionSetupWidgetState extends State<ConnectionSetupWidget>
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Image.asset(
-                        'assets/pats_logo.png',
+                        theme.brightness == Brightness.dark
+                            ? 'assets/logo_black.jpg'
+                            : 'assets/pats_logo.png',
                         height: 150,
                       ),
                       Text(
