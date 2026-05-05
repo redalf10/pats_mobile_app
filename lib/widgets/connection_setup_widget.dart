@@ -2,8 +2,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../viewmodels/walkie_talkie_viewmodel.dart';
-import '../models/user.dart';
 import '../config/theme_config.dart';
+import '../models/user.dart';
+import 'role_selection_dialog.dart';
 
 class ConnectionSetupWidget extends StatefulWidget {
   final WalkieTalkieViewModel viewModel;
@@ -67,15 +68,15 @@ class _ConnectionSetupWidgetState extends State<ConnectionSetupWidget>
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Image.asset(
-                        'assets/pats_logo.png',
-                        height: 200,
+                        theme.brightness == Brightness.dark
+                            ? 'assets/logo_black.jpg'
+                            : 'assets/pats_logo.png',
+                        height: 150,
                       ),
-
-                      const SizedBox(height: 10),
                       Text(
                         'Choose your connection mode',
                         style: TextStyle(
-                          fontSize: 16,
+                          fontSize: 12,
                           color: theme.colorScheme.onSurface.withOpacity(0.7),
                         ),
                       ),
@@ -131,7 +132,7 @@ class _ConnectionSetupWidgetState extends State<ConnectionSetupWidget>
                             Text(
                               'Join a Room',
                               style: TextStyle(
-                                fontSize: 20,
+                                fontSize: 16,
                                 fontWeight: FontWeight.w600,
                                 color: theme.colorScheme.onSurface,
                               ),
@@ -143,10 +144,10 @@ class _ConnectionSetupWidgetState extends State<ConnectionSetupWidget>
                               style: TextStyle(
                                 color: theme.colorScheme.onSurface
                                     .withOpacity(0.7),
-                                fontSize: 14,
+                                fontSize: 12,
                               ),
                             ),
-                            const SizedBox(height: 24),
+                            const SizedBox(height: 18),
                             Container(
                               decoration: BoxDecoration(
                                 color: theme.colorScheme.surface,
@@ -159,7 +160,7 @@ class _ConnectionSetupWidgetState extends State<ConnectionSetupWidget>
                                 controller: _serverIPController,
                                 style: TextStyle(
                                   color: theme.colorScheme.onSurface,
-                                  fontSize: 16,
+                                  fontSize: 14,
                                 ),
                                 decoration: InputDecoration(
                                   labelText: 'Room Code',
@@ -173,7 +174,7 @@ class _ConnectionSetupWidgetState extends State<ConnectionSetupWidget>
                                         .withOpacity(0.5),
                                   ),
                                   border: InputBorder.none,
-                                  contentPadding: const EdgeInsets.all(20),
+                                  contentPadding: const EdgeInsets.all(15),
                                 ),
                                 textCapitalization:
                                     TextCapitalization.characters,
@@ -220,7 +221,7 @@ class _ConnectionSetupWidgetState extends State<ConnectionSetupWidget>
                                           'Connect',
                                           style: TextStyle(
                                             color: Colors.white,
-                                            fontSize: 16,
+                                            fontSize: 14,
                                             fontWeight: FontWeight.w600,
                                           ),
                                         ),
@@ -276,7 +277,7 @@ class _ConnectionSetupWidgetState extends State<ConnectionSetupWidget>
           Text(
             title,
             style: TextStyle(
-              fontSize: 20,
+              fontSize: 16,
               fontWeight: FontWeight.w600,
               color: theme.colorScheme.onSurface,
             ),
@@ -287,7 +288,7 @@ class _ConnectionSetupWidgetState extends State<ConnectionSetupWidget>
             textAlign: TextAlign.center,
             style: TextStyle(
               color: theme.colorScheme.onSurface.withOpacity(0.7),
-              fontSize: 14,
+              fontSize: 12,
             ),
           ),
           const SizedBox(height: 24),
@@ -323,7 +324,7 @@ class _ConnectionSetupWidgetState extends State<ConnectionSetupWidget>
                         'Start Server',
                         style: TextStyle(
                           color: Colors.white,
-                          fontSize: 16,
+                          fontSize: 14,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -340,15 +341,31 @@ class _ConnectionSetupWidgetState extends State<ConnectionSetupWidget>
     HapticFeedback.mediumImpact();
 
     try {
-      final code = await widget.viewModel.startAsServer();
-      if (code != null) {
-        await _showServerStartedDialog(code);
+      // First show role selection dialog
+      final selectedRole = await _showServerRoleSelectionDialog();
+
+      if (selectedRole != null) {
+        print(
+            '🔍 Role selected, creating server with role: ${selectedRole.name}');
+        // Create server with the selected role
+        final code = await widget.viewModel.startAsServerWithRole(selectedRole);
+        print('🔍 Server creation result: ${code ?? 'null'}');
+        if (code != null) {
+          print('🔍 Showing server started dialog');
+          // Add a small delay to ensure the role selection dialog is fully closed
+          await Future.delayed(const Duration(milliseconds: 100));
+          await _showServerStartedDialog(code);
+        } else {
+          print('🔍 Server creation failed, showing error dialog');
+          _showErrorDialog(
+            'Failed to start server',
+            'Unable to start room server. Please try again.',
+          );
+        }
       } else {
-        _showErrorDialog(
-          'Failed to start server',
-          'Unable to start room server. Please try again.',
-        );
+        print('🔍 No role selected, staying on connection screen');
       }
+      // If user cancels role selection, do nothing (stay on connection screen)
     } catch (e) {
       _showErrorDialog('Error starting server', '$e');
     } finally {
@@ -356,8 +373,34 @@ class _ConnectionSetupWidgetState extends State<ConnectionSetupWidget>
     }
   }
 
+  Future<UserRole?> _showServerRoleSelectionDialog() async {
+    print('🔍 Showing server role selection dialog');
+
+    final selectedRole = await showDialog<UserRole>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        print('🔍 Building server role selection dialog');
+        return RoleSelectionDialog(
+          roomCode: 'TBD', // Will be generated after role selection
+          existingUsers: [], // No existing users when creating server
+          onRoleSelected: (role) {
+            print('🔍 Server creator selected role: ${role.name}');
+            Navigator.of(context).pop(role);
+          },
+        );
+      },
+    );
+
+    print(
+        '🔍 Server role dialog closed, selected role: ${selectedRole?.name ?? 'none'}');
+    return selectedRole;
+  }
+
   Future<void> _connectToServer() async {
     final code = _serverIPController.text.trim();
+    print('🔍 Attempting to connect with code: $code');
+
     if (code.isEmpty) {
       _showErrorDialog(
         'Missing Room Code',
@@ -372,16 +415,62 @@ class _ConnectionSetupWidgetState extends State<ConnectionSetupWidget>
       );
       return;
     }
+
+    print('🔍 Code validation passed, showing role selection dialog');
+    // Show role selection dialog before connecting
+    await _showRoleSelectionDialog(code.toUpperCase());
+  }
+
+  Future<void> _showRoleSelectionDialog(String roomCode) async {
+    print('🔍 Showing role selection dialog for room: $roomCode');
+
+    // Show role selection dialog immediately with empty user list
+    // We'll get the actual user list after connecting
+    final selectedRole = await showDialog<UserRole>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        print('🔍 Building role selection dialog');
+        return RoleSelectionDialog(
+          roomCode: roomCode,
+          existingUsers: [], // Start with empty list, will be updated after connection
+          onRoleSelected: (role) {
+            print('🔍 Role selected: ${role.name}');
+            Navigator.of(context).pop(role);
+          },
+        );
+      },
+    );
+
+    print('🔍 Dialog closed, selected role: ${selectedRole?.name ?? 'none'}');
+
+    if (selectedRole != null) {
+      print(
+          '🔍 Client role selected: ${selectedRole.name}, connecting to room: $roomCode');
+      await _connectWithRole(roomCode, selectedRole);
+    } else {
+      print('🔍 Client role selection cancelled');
+    }
+    // If user cancels, do nothing (stay on connection screen)
+  }
+
+  Future<void> _connectWithRole(String roomCode, UserRole role) async {
     setState(() => _isConnecting = true);
     HapticFeedback.mediumImpact();
 
     try {
+      // Disconnect first if already connected
+      if (widget.viewModel.connectionMode != ConnectionMode.disconnected) {
+        await widget.viewModel.disconnect();
+      }
+
+      // Connect with the selected role
       final success =
-          await widget.viewModel.connectToServer(code.toUpperCase());
+          await widget.viewModel.connectToServerWithRole(roomCode, role);
       if (!success) {
         _showErrorDialog(
           'Connection Failed',
-          'Room code not found or server not available.',
+          'Failed to join room with selected role.',
         );
       }
     } catch (e) {
@@ -535,185 +624,6 @@ class _ConnectionSetupWidgetState extends State<ConnectionSetupWidget>
                   ),
                 ),
               ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Future<void> _showRolePickerDialog(BuildContext context) async {
-    final theme = Theme.of(context);
-    return showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (BuildContext ctx) {
-        return Dialog(
-          backgroundColor: theme.cardColor,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: AnimatedBuilder(
-              animation: widget.viewModel,
-              builder: (context, _) {
-                final users = widget.viewModel.users;
-                // Get role holders
-                String? findHolderName(Role r) {
-                  for (final user in users) {
-                    if (widget.viewModel.getUserRole(user.id) == r) {
-                      return user.name;
-                    }
-                  }
-                  return null;
-                }
-
-                String? findHolderId(Role r) {
-                  for (final user in users) {
-                    if (widget.viewModel.getUserRole(user.id) == r) {
-                      return user.id;
-                    }
-                  }
-                  return null;
-                }
-
-                final tower1HolderId = findHolderId(Role.tower1);
-                final tower1HolderName = findHolderName(Role.tower1);
-                final tower2HolderId = findHolderId(Role.tower2);
-                final tower2HolderName = findHolderName(Role.tower2);
-                final pilotHolderId = findHolderId(Role.pilot);
-                final pilotHolderName = findHolderName(Role.pilot);
-
-                final myRole = widget.viewModel.myRole;
-
-                Widget roleButton({
-                  required String label,
-                  required Role role,
-                  String? holderId,
-                  String? holderName,
-                }) {
-                  final bool takenByOther = holderId != null &&
-                      holderId.isNotEmpty &&
-                      holderId != widget.viewModel.userId;
-                  final bool isMine = myRole == role;
-
-                  return SizedBox(
-                    width: 140,
-                    child: ElevatedButton(
-                      onPressed: takenByOther
-                          ? null
-                          : () async {
-                              final ok = await widget.viewModel.claimRole(role);
-                              if (ok) {
-                                Navigator.of(ctx).pop();
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text('Role set: $label')),
-                                );
-                              } else {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                      content: Text('$label already taken')),
-                                );
-                              }
-                            },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor:
-                            isMine ? AppTheme.secondaryColor : null,
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(label),
-                          if (holderName != null && holderName.isNotEmpty)
-                            Text(
-                              holderId == widget.viewModel.userId
-                                  ? 'You'
-                                  : holderName,
-                              style: TextStyle(
-                                  fontSize: 11,
-                                  color: theme.colorScheme.onSurface
-                                      .withOpacity(0.8)),
-                            ),
-                        ],
-                      ),
-                    ),
-                  );
-                }
-
-                return Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'Choose your role',
-                      style: TextStyle(
-                        color: theme.colorScheme.onSurface,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'Pick Tower 1, Tower 2, or Pilot if available to be able to speak. Otherwise pick Inspector to listen only.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: theme.colorScheme.onSurface.withOpacity(0.7),
-                        fontSize: 14,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      alignment: WrapAlignment.center,
-                      children: [
-                        roleButton(
-                            label: 'Tower 1',
-                            role: Role.tower1,
-                            holderId: tower1HolderId,
-                            holderName: tower1HolderName),
-                        roleButton(
-                            label: 'Tower 2',
-                            role: Role.tower2,
-                            holderId: tower2HolderId,
-                            holderName: tower2HolderName),
-                        roleButton(
-                            label: 'Pilot',
-                            role: Role.pilot,
-                            holderId: pilotHolderId,
-                            holderName: pilotHolderName),
-                        SizedBox(
-                          width: 140,
-                          child: OutlinedButton(
-                            onPressed: () async {
-                              await widget.viewModel.releaseRole();
-                              Navigator.of(ctx).pop();
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                    content: Text('Role set: Inspector')),
-                              );
-                            },
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Text('Inspector'),
-                                Text(
-                                  'Listen only',
-                                  style: TextStyle(
-                                      fontSize: 11,
-                                      color: theme.colorScheme.onSurface
-                                          .withOpacity(0.7)),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                  ],
-                );
-              },
             ),
           ),
         );

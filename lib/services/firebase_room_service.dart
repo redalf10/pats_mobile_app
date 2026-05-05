@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'package:firebase_database/firebase_database.dart';
-import 'package:firebase_database_platform_interface/firebase_database_platform_interface.dart'
-    show MutableData, Transaction;
+// firebase_database.dart provides the Transaction/MutableData types we need.
 import '../models/user.dart';
 import 'package:logger/logger.dart';
 
@@ -45,8 +44,19 @@ class FirebaseRoomService {
         onUsersChanged(users);
       });
 
-      // Set up messages listener
+      // FIXED: Set up listeners for all message types
+      // Listen to messages table (for join, leave, speaking_status, etc.)
       _messagesSub = _roomRef.child('messages').onChildAdded.listen((event) {
+        if (event.snapshot.value != null) {
+          final data = Map<String, dynamic>.from(event.snapshot.value as Map);
+          onMessage(data);
+        }
+      });
+
+      // FIXED: Audio table listener removed - audio data is now stored with transcripts only
+
+      // Listen to transcripts table
+      _roomRef.child('transcripts').onChildAdded.listen((event) {
         if (event.snapshot.value != null) {
           final data = Map<String, dynamic>.from(event.snapshot.value as Map);
           onMessage(data);
@@ -86,12 +96,16 @@ class FirebaseRoomService {
 
   Future<void> addUser(User user) async {
     try {
-      await _usersRef.child(user.id).set({
+      logger.i('🔥 FirebaseRoomService: Adding user ${user.name} (${user.id})');
+      final userData = {
         ...user.toJson(),
         'lastSeen': ServerValue.timestamp,
-      });
+      };
+      logger.d('🔥 User data: $userData');
+      await _usersRef.child(user.id).set(userData);
+      logger.i('✅ User added successfully to Firebase');
     } catch (e) {
-      logger.e('Error adding user: $e');
+      logger.e('❌ Error adding user: $e');
       rethrow;
     }
   }
@@ -107,64 +121,32 @@ class FirebaseRoomService {
     }
   }
 
-  Future<void> updateUserRole(String userId, String role) async {
-    try {
-      await _usersRef.child(userId).update({
-        'role': role,
-        'lastSeen': ServerValue.timestamp,
-      });
-    } catch (e) {
-      logger.e('Error updating user role: $e');
-    }
-  }
-
-  /// Atomically claim a role using a Firebase transaction. Returns true if this
-  /// user's role was set to [role], false if another user already holds it.
-  Future<bool> claimRole(String userId, String role) async {
-    try {
-      final result = await _usersRef.runTransaction((currentData) {
-        final dyn = currentData as dynamic;
-        if (dyn == null) return Transaction.abort();
-        final Map<dynamic, dynamic> usersMap =
-            (dyn.value as Map?)?.cast<dynamic, dynamic>() ?? {};
-
-        // Check if someone else already holds the role
-        String? existingHolder;
-        usersMap.forEach((key, value) {
-          if (value is Map && value['role'] == role) {
-            existingHolder = key as String;
-          }
-        });
-
-        if (existingHolder == null || existingHolder == userId) {
-          // Safe to assign role to this user (either unclaimed or already ours)
-          final Map userEntry = (usersMap[userId] is Map)
-              ? Map<String, dynamic>.from(usersMap[userId])
-              : <String, dynamic>{};
-          userEntry['role'] = role;
-          userEntry['lastSeen'] = ServerValue.timestamp;
-          usersMap[userId] = userEntry;
-          dyn.value = usersMap;
-          return Transaction.success(dyn);
-        }
-
-        // Role taken by someone else; abort
-        return Transaction.abort();
-      });
-
-      return result.committed;
-    } catch (e) {
-      logger.e('Error during claimRole transaction: $e');
-      return false;
-    }
-  }
-
   Future<void> sendMessage(Map<String, dynamic> message) async {
     try {
-      await _roomRef.child('messages').push().set({
-        ...message,
-        'timestamp': ServerValue.timestamp,
-      });
+      final messageType = message['type'] as String?;
+
+      // FIXED: Route messages to appropriate tables based on type
+      if (messageType == 'audio') {
+        // FIXED: Audio messages are no longer stored separately - audio data is stored with transcripts
+        // Only broadcast audio data for real-time playback, don't store in database
+        logger.i(
+            '🔥 Audio message received for real-time playback: ${message['userId']} (${message['data']?.length ?? 0} chars)');
+      } else if (messageType == 'transcript') {
+        // Transcript messages go to the 'transcripts' table (not messages)
+        await _roomRef.child('transcripts').push().set({
+          ...message,
+          'timestamp': ServerValue.timestamp,
+        });
+        logger.i(
+            '🔥 Transcript message sent to transcripts table: ${message['userId']} - "${message['text']}"');
+      } else {
+        // Other messages (join, leave, speaking_status, etc.) go to messages table
+        await _roomRef.child('messages').push().set({
+          ...message,
+          'timestamp': ServerValue.timestamp,
+        });
+        logger.d('Other message sent to messages table');
+      }
     } catch (e) {
       logger.e('Error sending message: $e');
       rethrow;
@@ -179,33 +161,11 @@ class FirebaseRoomService {
     }
   }
 
-  /// Resets all users in the room to have the inspector role
-  Future<void> resetAllRoles() async {
-    try {
-      final snapshot = await _usersRef.get();
-      if (snapshot.exists) {
-        final Map<dynamic, dynamic> usersMap = snapshot.value as Map;
-        final batch = <Future<void>>[];
-
-        usersMap.forEach((key, value) {
-          if (value is Map) {
-            batch.add(_usersRef.child(key.toString()).update({
-              'role': 'inspector',
-              'lastSeen': ServerValue.timestamp,
-            }));
-          }
-        });
-
-        await Future.wait(batch);
-      }
-    } catch (e) {
-      logger.e('Error resetting user roles: $e');
-    }
-  }
-
   void dispose() {
     _usersSub?.cancel();
     _messagesSub?.cancel();
     _presenceTimer?.cancel();
+    // Note: The audio and transcript listeners are not stored in variables
+    // so they will be automatically cancelled when the service is disposed
   }
 }

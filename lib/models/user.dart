@@ -1,4 +1,9 @@
-enum Role { tower1, tower2, pilot, inspector }
+enum UserRole {
+  pilot1,
+  pilot2,
+  tower,
+  inspector,
+}
 
 class User {
   final String id;
@@ -6,7 +11,7 @@ class User {
   final bool isSpeaking;
   final String ipAddress;
   final String? photoUrl;
-  final Role role;
+  final UserRole role;
 
   User({
     required this.id,
@@ -14,7 +19,7 @@ class User {
     this.isSpeaking = false,
     this.ipAddress = '',
     this.photoUrl,
-    this.role = Role.pilot,  // Changed default role to pilot
+    this.role = UserRole.inspector,
   });
 
   User copyWith({
@@ -23,7 +28,7 @@ class User {
     bool? isSpeaking,
     String? ipAddress,
     String? photoUrl,
-    Role? role,
+    UserRole? role,
   }) {
     return User(
       id: id ?? this.id,
@@ -42,23 +47,21 @@ class User {
       'isSpeaking': isSpeaking,
       'ipAddress': ipAddress,
       'photoUrl': photoUrl,
-      'role': role.toString().split('.').last, // Convert role to string format
+      'role': role.name,
     };
   }
 
   factory User.fromJson(Map<String, dynamic> json) {
     return User(
-      id: json['id'] as String,
-      name: json['name'] as String,
+      id: (json['id'] as String?) ?? '',
+      name: (json['name'] as String?) ?? 'Unknown User',
       isSpeaking: json['isSpeaking'] as bool? ?? false,
       ipAddress: json['ipAddress'] as String? ?? '',
       photoUrl: json['photoUrl'] as String?,
-      role: json['role'] != null
-          ? Role.values.firstWhere(
-              (e) => e.toString().split('.').last == json['role'],
-              orElse: () => Role.pilot,
-            )
-          : Role.pilot,  // Changed default role to pilot
+      role: UserRole.values.firstWhere(
+        (role) => role.name == json['role'],
+        orElse: () => UserRole.inspector,
+      ),
     );
   }
 }

@@ -72,6 +72,13 @@ class AudioService {
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       _currentRecordingPath = '${directory.path}/audio_$timestamp.wav';
 
+      // Check if microphone is available
+      final hasPermission = await _recorder.hasPermission();
+      if (!hasPermission) {
+        logger.e('Microphone permission not available for recording');
+        return null;
+      }
+
       await _recorder.start(
         const RecordConfig(
           encoder: AudioEncoder.wav,
@@ -82,9 +89,16 @@ class AudioService {
       );
 
       _isRecording = true;
+      logger.i('Audio recording started successfully: $_currentRecordingPath');
       return _currentRecordingPath;
     } catch (e) {
       logger.e('Failed to start recording: $e');
+      // Check if the error is related to microphone being in use
+      if (e.toString().contains('microphone') ||
+          e.toString().contains('audio') ||
+          e.toString().contains('busy')) {
+        logger.w('Microphone may be in use by another service (STT)');
+      }
       return null;
     }
   }
@@ -227,7 +241,7 @@ class AudioService {
             _lastNonEmptyTranscription = _lastTranscription;
           }
           logger.i(
-              'STT result: "${_lastTranscription}" (final: ${result.finalResult})');
+              'STT result: "$_lastTranscription" (final: ${result.finalResult})');
           try {
             if (_lastTranscription.isNotEmpty) {
               _transcriptionController.add(_lastTranscription);
@@ -244,6 +258,78 @@ class AudioService {
       return true;
     } catch (e) {
       logger.e('Error starting STT listening: $e');
+      _isListening = false;
+      return false;
+    }
+  }
+
+  /// Start listening in continuous mode - only stops when explicitly called
+  /// This is for push-to-talk scenarios where STT should not auto-pause
+  Future<bool> startListeningContinuous() async {
+    // Prevent multiple simultaneous listening sessions
+    if (_isListening) {
+      logger.w('STT is already listening, ignoring start request');
+      return true;
+    }
+
+    if (!await Permission.microphone.isGranted) {
+      final ok = await requestPermissions();
+      if (!ok) return false;
+    }
+
+    // Initialize STT only once
+    if (!_isInitialized) {
+      _speech ??= stt.SpeechToText();
+      final available = await _speech!.initialize(
+        onError: (e) => logger.e('STT init error: $e'),
+        onStatus: (s) {
+          logger.d('STT init status: $s');
+          _lastSttStatus = s;
+          try {
+            _sttStatusController.add(s);
+          } catch (_) {}
+        },
+      );
+      if (!available) {
+        logger.e('Speech recognition not available');
+        return false;
+      }
+      _isInitialized = true;
+    }
+
+    _lastTranscription = '';
+    _isListening = true;
+
+    try {
+      // Use continuous listening mode with very long timeouts
+      // This prevents STT from stopping prematurely during pauses
+      await _speech!.listen(
+        onResult: (result) {
+          _lastTranscription = result.recognizedWords;
+          if (_lastTranscription.isNotEmpty) {
+            _lastNonEmptyTranscription = _lastTranscription;
+          }
+          logger.i(
+              'STT continuous result: "$_lastTranscription" (final: ${result.finalResult})');
+          try {
+            if (_lastTranscription.isNotEmpty) {
+              _transcriptionController.add(_lastTranscription);
+            }
+          } catch (e) {
+            logger.e('Error adding to transcription stream: $e');
+          }
+        },
+        listenMode: stt.ListenMode.dictation,
+        partialResults: true,
+        // Longer pause duration to avoid stopping during natural pauses
+        pauseFor: const Duration(seconds: 30),
+        // Extended listen duration for continuous capture
+        listenFor: const Duration(minutes: 5),
+      );
+      logger.i('Started continuous STT listening (press-and-hold mode)');
+      return true;
+    } catch (e) {
+      logger.e('Error starting continuous STT listening: $e');
       _isListening = false;
       return false;
     }
@@ -286,6 +372,33 @@ class AudioService {
     } catch (e) {
       logger.e('Error resetting STT state: $e');
     }
+  }
+
+  /// Check if microphone is available for recording
+  Future<bool> isMicrophoneAvailable() async {
+    try {
+      final hasPermission = await Permission.microphone.isGranted;
+      if (!hasPermission) return false;
+
+      // Try to check if recorder can access microphone
+      final recorderPermission = await _recorder.hasPermission();
+      return recorderPermission;
+    } catch (e) {
+      logger.e('Error checking microphone availability: $e');
+      return false;
+    }
+  }
+
+  /// Try to start recording with fallback if microphone is busy
+  Future<String?> startRecordingWithFallback() async {
+    // First try normal recording
+    final result = await startRecording();
+    if (result != null) return result;
+
+    // If that fails, try with a small delay (in case STT is still initializing)
+    logger.i('Initial recording failed, trying with delay...');
+    await Future.delayed(const Duration(milliseconds: 1000));
+    return await startRecording();
   }
 
   Future<void> dispose() async {

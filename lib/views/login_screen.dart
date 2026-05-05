@@ -32,7 +32,9 @@ class LoginScreen extends StatelessWidget {
                       ),
                     ),
                     child: Image.asset(
-                      'assets/pats_logo.png',
+                      theme.brightness == Brightness.dark
+                          ? 'assets/logo_black.jpg'
+                          : 'assets/pats_logo.png',
                       height: 140,
                       width: 140,
                     ),
@@ -60,11 +62,11 @@ class LoginScreen extends StatelessWidget {
                       await AuthService.instance.signInWithGoogle();
                     } catch (e) {
                       if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('Sign-in failed: $e'),
-                          ),
-                        );
+                        // ScaffoldMessenger.of(context).showSnackBar(
+                        //   SnackBar(
+                        //     content: Text('Sign-in failed: $e'),
+                        //   ),
+                        // );
                       }
                     }
                   }),

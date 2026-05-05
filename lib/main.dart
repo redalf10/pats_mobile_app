@@ -8,22 +8,24 @@ import 'package:firebase_core/firebase_core.dart';
 import 'services/auth_service.dart';
 import 'services/audio_service.dart';
 import 'services/network_service.dart';
-import 'services/local_db_service.dart';
+import 'services/firebase_service.dart';
+import 'services/gemini_service.dart';
 import 'viewmodels/walkie_talkie_viewmodel.dart';
+import 'viewmodels/transcription_viewmodel.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
 
   // Initialize Firebase-backed LocalDbService
-  final dbService = LocalDbService();
+  final dbService = FirebaseDbService();
   await dbService.init();
 
   runApp(MyApp(dbService: dbService));
 }
 
 class MyApp extends StatelessWidget {
-  final LocalDbService dbService;
+  final FirebaseDbService dbService;
 
   const MyApp({super.key, required this.dbService});
 
@@ -37,12 +39,25 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
         Provider<AudioService>(create: (_) => AudioService()),
         Provider<NetworkService>(create: (_) => NetworkService()),
-        Provider<LocalDbService>(create: (_) => dbService),
+        Provider<FirebaseDbService>(create: (_) => dbService),
+        Provider<GeminiService>(create: (_) => GeminiService()),
+        ChangeNotifierProvider<TranscriptionViewModel>(
+          create: (context) {
+            final viewModel = TranscriptionViewModel();
+            // Set up automatic analysis after the provider is created
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              final dbService = context.read<FirebaseDbService>();
+              viewModel.setupAutoAnalysis(dbService);
+            });
+            return viewModel;
+          },
+        ),
         ChangeNotifierProvider<WalkieTalkieViewModel>(
           create: (context) {
             final audio = context.read<AudioService>();
             final network = context.read<NetworkService>();
-            final localDb = context.read<LocalDbService>();
+            final localDb = context.read<FirebaseDbService>();
+            final gemini = context.read<GeminiService>();
             String fallbackName =
                 'User ${DateTime.now().millisecondsSinceEpoch % 1000}';
             String name;
@@ -57,6 +72,7 @@ class MyApp extends StatelessWidget {
               audioService: audio,
               networkService: network,
               localDbService: localDb,
+              geminiService: gemini,
             );
             viewModel.initialize().catchError((error) {
               // ignore: avoid_print

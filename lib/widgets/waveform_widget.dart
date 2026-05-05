@@ -5,7 +5,7 @@ import '../config/theme_config.dart';
 
 class WaveformWidget extends StatefulWidget {
   final bool isTalking;
-  
+
   const WaveformWidget({super.key, required this.isTalking});
 
   @override
@@ -53,7 +53,8 @@ class _WaveformWidgetState extends State<WaveformWidget>
 
   void _startWaveAnimation() {
     _animationTimer?.cancel();
-    _animationTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
+    _animationTimer =
+        Timer.periodic(const Duration(milliseconds: 100), (timer) {
       if (mounted && widget.isTalking) {
         setState(() {
           for (int i = 0; i < _waveHeights.length; i++) {
@@ -93,8 +94,8 @@ class _WaveformWidgetState extends State<WaveformWidget>
         return Transform.scale(
           scale: widget.isTalking ? _pulseAnimation.value : 1.0,
           child: Container(
-            height: 80,
-            margin: const EdgeInsets.symmetric(horizontal: 32),
+            height: 50,
+            margin: const EdgeInsets.symmetric(horizontal: 24),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               crossAxisAlignment: CrossAxisAlignment.end,
@@ -102,8 +103,8 @@ class _WaveformWidgetState extends State<WaveformWidget>
                 final isActive = widget.isTalking && entry.value > 0.3;
                 return AnimatedContainer(
                   duration: const Duration(milliseconds: 100),
-                  width: 3,
-                  height: entry.value * 60,
+                  width: 2.5,
+                  height: entry.value * 40,
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
                       begin: Alignment.bottomCenter,
